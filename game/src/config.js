@@ -1,155 +1,80 @@
-// TELUK HARAPAN — every tuning number, colour, district and mission in one place.
-// The city is a 480 x 480 grid centred on (0, 0): roads every 60 units, blocks between them.
-
-export const STEP = 1 / 60;
+// TELUK HARAPAN — Round 2. Configuration: city, districts, missions, economy.
+// All original: fictional Kota Teluk Harapan, protagonist Raka vs Bang Darto.
 
 export const CITY = {
-  half: 240,
-  roadEvery: 60,
-  roadWidth: 10,
-  sidewalk: 3,
+  half: 250,          // playable bounds [-250, 250] on x and z
+  roadEvery: 60,      // roads on a 60-unit grid
+  roadHalf: 5,        // half-width of a road
 };
 
-export const SAVE_KEY = 'teluk-harapan.save.v1';
-
-export const PLAYER = {
-  walk: 3.6,
-  run: 6.5,
-  radius: 0.9,
-  health: 100,
-  punchRange: 2.4,
-  punchDamage: 25,
-  shootRange: 42,
-  shootDamage: 34,
-};
-
-export const CAR = {
-  accel: 15,
-  brake: 24,
-  maxSpeed: 36,
-  maxReverse: 11,
-  steer: 2.0,
-  radius: 2.3,
-  length: 4.4,
-  width: 2.0,
-};
-
-export const POLICE = {
-  baseSpeed: 13,
-  perStar: 1.7,
-  /** How many police cars hunt the player at each wanted level (index = stars). */
-  count: [0, 1, 2, 3, 4, 4],
-  ramDamage: 8,
-  ramCooldown: 1.0,
-};
-
-export const WANTED = {
-  decaySeconds: 22,
-  steal: 1,
-  punchPed: 1,
-  killPed: 2,
-  shoot: 1,
-  ramPolice: 2,
-};
-
-/** Districts, by region. Beach is the sand strip along the south edge. */
-export function districtAt(x, z) {
-  if (z < -200) return 'beach';
-  if (x < -120 && z > 120) return 'port';
-  if (x >= -120 && x < 60 && z > 60) return 'market';
-  if (x >= 60 && z > -60) return 'cbd';
-  if (x < -60 && z <= 60) return 'hills';
-  return 'senja';
-}
-
-export const DISTRICT_STYLE = {
-  port: { hMin: 8, hMax: 14, colors: [0x8a7a5c, 0x7c6a52, 0x9a8a68, 0x6e6250], wide: true },
-  market: { hMin: 6, hMax: 11, colors: [0xc96a3b, 0xd9a441, 0x7fb069, 0x4e7fa8, 0xb8574f, 0xe0c090], wide: false },
-  cbd: { hMin: 30, hMax: 88, colors: [0x5a7ea6, 0x6b93b8, 0x7fa3c4, 0x4f6d8f], wide: false, glass: true },
-  hills: { hMin: 5, hMax: 8, colors: [0xd8c9a3, 0xc9b18c, 0xb7a284, 0xe0d3b8], wide: false },
-  senja: { hMin: 5, hMax: 9, colors: [0xe8b48a, 0xd9a06e, 0xc98f5f, 0xe0c090], wide: false },
-  beach: { hMin: 3, hMax: 5, colors: [0xe8dcc0, 0xdcc9a0], wide: false },
-};
-
-export const MISSIONS = [
-  {
-    id: 1,
-    title: 'Misi 1 — Paket Pertama',
-    briefing: 'Bang Darto butuh kurir. Ambil paket di Pasar Lama, antar ke Pelabuhan. Kalau belum punya mobil, curi saja satu (F).',
-    stages: [
-      { text: 'Ambil paket di Pasar Lama', target: { x: -60, z: 150 }, kind: 'pickup' },
-      { text: 'Antar paket ke Pelabuhan', target: { x: -180, z: 180 }, kind: 'deliver' },
-    ],
-    reward: 150,
-  },
-  {
-    id: 2,
-    title: 'Misi 2 — Mobil Pertama',
-    briefing: 'Darto mau mobil bagus. Curi mobil apa saja (F di dekat mobil), lalu bawa ke bengkelnya di Pelabuhan.',
-    stages: [
-      { text: 'Curi sebuah mobil (F)', target: null, kind: 'steal' },
-      { text: 'Bawa mobil ke bengkel Darto', target: { x: -180, z: 210 }, kind: 'deliver' },
-    ],
-    reward: 250,
-  },
-  {
-    id: 3,
-    title: 'Misi 3 — Kejar-kejaran',
-    briefing: 'Polisi sudah mengendusmu. Wanted 3 bintang! Bertahan 45 detik, atau kabur ke tempat aman di Bukit.',
-    stages: [
-      { text: 'Kabur dari polisi! Bertahan atau capai Bukit', target: { x: -180, z: -180 }, kind: 'survive', seconds: 45 },
-    ],
-    reward: 400,
-  },
-  {
-    id: 4,
-    title: 'Misi 4 — Rampok Toko',
-    briefing: 'Kas toko di Pasar Lama sedang penuh. Masuk, todong kasir (E), ambil uangnya, lalu hilang sebelum polisi datang.',
-    stages: [
-      { text: 'Rampok toko di Pasar Lama (E)', target: { x: -60, z: 120 }, kind: 'rob' },
-      { text: 'Kabur! Hilangkan wanted', target: null, kind: 'escape' },
-    ],
-    reward: 600,
-  },
-  {
-    id: 5,
-    title: 'Misi 5 — Jebakan Terakhir',
-    briefing: 'Saatnya menagih. Pancing Darto ke Pelabuhan dan habisi anak buahnya — utangmu lunas malam ini.',
-    stages: [
-      { text: 'Habisi anak buah Darto di Pelabuhan', target: { x: -120, z: 180 }, kind: 'fight', enemies: 4 },
-    ],
-    reward: 1000,
-  },
+export const DISTRICTS = [
+  { id: 'harbor',   name: 'Pelabuhan',       x0: -250, x1: -120, z0: -250, z1: -60,  kind: 'harbor' },
+  { id: 'market',   name: 'Pasar Lama',      x0: -120, x1: 0,    z0: -250, z1: -60,  kind: 'market' },
+  { id: 'cbd',      name: 'Menara Kaca',    x0: 0,    x1: 120,  z0: -250, z1: -60,  kind: 'cbd' },
+  { id: 'warehouse',name: 'Gudang Timur',    x0: 120,  x1: 250,  z0: -250, z1: -60,  kind: 'warehouse' },
+  { id: 'plaza',    name: 'Alun-Alun',       x0: -120, x1: 120,  z0: -60,  z1: 60,   kind: 'plaza' },
+  { id: 'homes',    name: 'Perumahan Bukit', x0: -250, x1: 0,    z0: 60,   z1: 250,  kind: 'homes' },
+  { id: 'beach',    name: 'Pantai Senja',    x0: 0,    x1: 250,  z0: 60,   z1: 250,  kind: 'beach' },
 ];
 
-export const SIDE_JOBS = {
-  taxiFare: [40, 85],
-  courierFare: [30, 60],
+export const DAY_LIGHT = [
+  { sky: 0xff9a52, fog: 0xf7b267, sun: 0xffd27a, sunPos: [-140, 90, -60], hemi: 0xffe0b3, amb: 0.55, lamp: false, label: 'Hari 1 — Senja' },
+  { sky: 0x7a5ba6, fog: 0x9a7bb0, sun: 0xff8f5e, sunPos: [-180, 45, 40],  hemi: 0xc9a7d8, amb: 0.45, lamp: true,  label: 'Hari 2 — Maghrib' },
+  { sky: 0x0d1530, fog: 0x1a2440, sun: 0x8fb4ff, sunPos: [60, 120, -100], hemi: 0x5a6ea8, amb: 0.35, lamp: true,  label: 'Hari 3 — Malam' },
+];
+
+// Missions: 12 across 3 days. type: reach | deliver | taxi | fight | race | collect | survive | escort | hold | drive
+export const MISSIONS = [
+  { day: 1, id: 'M1',  title: 'Turun di Pelabuhan', type: 'reach',   target: [-180, -180], reward: 50,
+    text: 'Raka baru turun dari kapal. Temui kontak di ujung dermaga Pelabuhan.' },
+  { day: 1, id: 'M2',  title: 'Antar Paket',        type: 'deliver', pickup: [-60, -180], target: [180, 180], time: 75, reward: 80,
+    text: 'Ambil paket di Pasar Lama, antar ke gubuk Pantai Senja sebelum 75 detik.' },
+  { day: 1, id: 'M3',  title: 'Taksi Pertama',      type: 'taxi',    stops: [[-30, 0, -180, 150], [60, -180, -180, -120]], reward: 80,
+    text: 'Dua penumpang menunggu taksi. Jemput dan antar mereka tepat waktu.' },
+  { day: 1, id: 'M4',  title: 'Utang Lama',         type: 'fight',   target: [-60, -120], thugs: 1, reward: 60,
+    text: 'Joko si penagih utang menghadang di Pasar Lama. Selesaikan dengan tinju. (Spasi = pukul)' },
+  { day: 2, id: 'M5',  title: 'Balap Pantai',       type: 'race',    points: [[180, 120], [200, 210], [60, 210], [-60, 210], [-180, 120]], time: 100, reward: 120,
+    text: 'Balapan liar di Pantai Senja. Lewati 5 titik sebelum 100 detik. Butuh mobil!' },
+  { day: 2, id: 'M6',  title: 'Tagih Utang',        type: 'collect', targets: [[-180, -200], [90, -200], [-150, 200]], reward: 150,
+    text: 'Tiga orang berutang pada Bang Darto. Datangi dan tagih dengan E.' },
+  { day: 2, id: 'M7',  title: 'Kabur dari Polisi',  type: 'survive', wanted: 3, time: 30, reward: 100,
+    text: 'Polisi memburumu! Bertahan 30 detik tanpa tertangkap.' },
+  { day: 2, id: 'M8',  title: 'Selamatkan Sari',    type: 'escort',  target: [-150, 120], dest: [-30, -150], reward: 120,
+    text: 'Sari terjebak di Perumahan Bukit. Jemput dia, lalu antar ke rumah aman Pasar Lama.' },
+  { day: 3, id: 'M9',  title: 'Mata-Mata Menara',   type: 'hold',    target: [60, -180], hold: 8, reward: 100,
+    text: 'Menyusup ke Menara Kaca. Bertahan 8 detik di titik pantau tanpa ketahuan.' },
+  { day: 3, id: 'M10', title: 'Perang Geng',        type: 'fight',   target: [-200, -200], thugs: 5, reward: 150,
+    text: 'Lima anak buah Darto menjaga dermaga. Habisi mereka semua.' },
+  { day: 3, id: 'M11', title: 'Pelarian Terakhir',  type: 'drive',   from: [90, -120], target: [200, 200], time: 75, wanted: 4, reward: 150,
+    text: 'Bawa mobil dari Menara Kaca ke Pantai Senja dalam 75 detik, dengan 4 bintang buronan!' },
+  { day: 3, id: 'M12', title: 'Menara Kaca',        type: 'boss',    target: [60, -120], reward: 500,
+    text: 'FINAL: Bang Darto menunggumu di plaza Menara Kaca. Kalahkan dia dan rebut kotanya.' },
+];
+
+export const ECONOMY = {
+  clinicCost: 50,   // heal to full
+  ammoCost: 20,     // +12 bullets
+  repairCost: 30,   // fix current car
+  taxiFare: 40,
+  courierPay: 35,
+  collectPay: 40,
+  startMoney: 100,
+  startAmmo: 24,
 };
 
-export const PRICES = {
-  health: 50,
-  ammo12: 20,
-  repair: 100,
-};
+export const SHOPS = [
+  { id: 'clinic', name: 'Klinik Sehat',  pos: [-90, -30],  action: 'heal',  cost: ECONOMY.clinicCost, label: 'E — Berobat $50 (nyawa penuh)' },
+  { id: 'ammo',   name: 'Toko Amunisi',  pos: [30, -30],   action: 'ammo',  cost: ECONOMY.ammoCost,   label: 'E — Beli peluru $20 (+12)' },
+  { id: 'repair', name: 'Bengkel Jaya',  pos: [-90, 30],   action: 'repair', cost: ECONOMY.repairCost, label: 'E — Perbaiki mobil $30' },
+  { id: 'taxi',   name: 'Pangkalan Taksi', pos: [30, 30],  action: 'taxi',  cost: 0, label: 'E — Cari penumpang taksi' },
+  { id: 'courier',name: 'Kantor Kurir',  pos: [150, 30],   action: 'courier', cost: 0, label: 'E — Ambil paket kurir' },
+];
 
-export const PALETTE = {
-  sky: 0xff9e57,
-  skyTop: 0x7d6bb0,
-  fog: 0xe8a06a,
-  sun: 0xffd9a0,
-  ground: 0x55555e,
-  road: 0x33333a,
-  sidewalk: 0x8d8d94,
-  sand: 0xe0cd9a,
-  sea: 0x2e6f8e,
-  grass: 0x5d7d4a,
-  playerJacket: 0x2e86c1,
-  thug: 0x7a2e2e,
-  police: 0xf2f2f2,
-  text: '#f5efe6',
-  muted: '#c9b8a3',
-  accent: '#ffcf5c',
+export const COLORS = {
+  road: 0x2e2e38, sidewalk: 0x8a8a92, ground: 0x5d7a4a,
+  sand: 0xd9c184, water: 0x2f6f8f, plaza: 0x9a938a,
+  buildingPalette: [0xc96f4a, 0xd8a24a, 0x7a9a6a, 0x6a8ab0, 0xb06a7a, 0x8a6ab0, 0xd8d0c0],
+  glass: 0x7fb8d8, glassDark: 0x4a7a9a,
+  carPalette: [0xd83a2e, 0x2e6ad8, 0xe8c832, 0x3aa84a, 0xe8e8e8, 0x222222, 0x8a4ad8, 0xd87a2e],
+  police: 0x1a4ad8, taxi: 0xf2c200,
 };
-
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
