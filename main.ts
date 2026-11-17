@@ -1,4 +1,4 @@
-// TELUK HARAPAN, round 2 (gta6-01): the game is this directory's game/ folder, plain
+// TELUK HARAPAN, round 2 redo (gta6-01): the game is this directory's game/ folder, plain
 // static files a desktop browser loads offline (game/index.html and its ES modules, plus
 // vendored Three.js under game/vendor/, no network request), and the program hands it in.
 // It copies game/ and screenshots/ from beside this file to /output and writes

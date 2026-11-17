@@ -3,81 +3,49 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TELUK HARAPAN — Tiga Hari di Kota Teluk Harapan</title>
+<title>Teluk Harapan — Open-World Crime 3D</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1530; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0f22; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; display: none; }
-  .panel { background: rgba(10, 12, 20, 0.62); border-radius: 10px; padding: 8px 12px; }
-  #hud-topleft { position: absolute; top: 12px; left: 12px; font-size: 15px; line-height: 1.5; }
-  #hud-topleft b { color: #ffe14a; }
-  #hpwrap { width: 170px; height: 10px; background: #333; border-radius: 5px; overflow: hidden; margin-top: 4px; }
-  #hud-hpbar { height: 100%; width: 100%; background: #3aa84a; }
-  #hud-wanted { position: absolute; top: 12px; right: 12px; font-size: 26px; letter-spacing: 2px; }
-  #hud-mission { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: 560px; text-align: center; font-size: 14px; }
-  #hud-timer { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); font-size: 20px; font-weight: 700; color: #ffe14a; }
-  #banner { position: absolute; top: 22%; left: 50%; transform: translateX(-50%); font-size: 30px; font-weight: 800; color: #ffe14a; text-shadow: 0 2px 12px #000; opacity: 0; transition: opacity .4s; text-align: center; white-space: nowrap; }
-  #prompt { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); font-size: 15px; background: rgba(10,12,20,.7); padding: 6px 14px; border-radius: 8px; }
-  #speed { position: absolute; bottom: 18px; left: 16px; font-size: 22px; font-weight: 700; }
-  #minimap { position: absolute; right: 12px; bottom: 12px; width: 190px; height: 190px; border: 2px solid rgba(255,255,255,.35); border-radius: 8px; }
-  #crosshair { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border: 2px solid #fff; border-radius: 50%; display: none; opacity: .8; }
-  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(180deg, rgba(13,21,48,.88), rgba(60,20,40,.88)); color: #fff; z-index: 10; }
-  .card { max-width: 640px; text-align: center; padding: 28px; }
-  .card h1 { font-size: 52px; margin: 0 0 4px; color: #ffe14a; letter-spacing: 2px; }
-  .card h2 { font-size: 18px; margin: 0 0 14px; color: #ffb27a; font-weight: 600; }
-  .card p { font-size: 15px; line-height: 1.6; color: #e8e8e8; }
-  .card button { pointer-events: auto; cursor: pointer; font-size: 18px; font-weight: 700; padding: 12px 28px; margin: 8px 6px 0; border: none; border-radius: 10px; background: #ffe14a; color: #221100; }
-  .card button.secondary { background: #2e6ad8; color: #fff; }
-  .controls { font-size: 13px; color: #bbb; margin-top: 16px; line-height: 1.7; }
-  #end-screen { display: none; }
+  .hud { position: fixed; color: #eef1f5; text-shadow: 0 1px 3px rgba(0,0,0,.8); pointer-events: none; z-index: 5; }
+  #hud-topleft { top: 14px; left: 16px; font-size: 20px; line-height: 1.5; }
+  #hud-money { font-weight: 800; font-size: 26px; color: #7ddc7d; }
+  #hud-hpbar-wrap { width: 180px; height: 10px; background: rgba(0,0,0,.55); border: 1px solid #555; margin-top: 4px; }
+  #hud-hpbar { height: 100%; width: 100%; background: #e84d3d; }
+  #hud-wanted { color: #ffd34d; letter-spacing: 2px; font-size: 22px; }
+  #hud-topcenter { top: 12px; left: 50%; transform: translateX(-50%); text-align: center; font-size: 17px; }
+  #hud-day { font-weight: 700; color: #ffd34d; }
+  #hud-mission { margin-top: 2px; font-size: 15px; color: #cfe3ff; }
+  #hud-district { font-size: 13px; color: #9aa3b2; }
+  #minimap { position: fixed; top: 14px; right: 16px; width: 180px; height: 180px; border: 2px solid rgba(255,255,255,.35); background: #14161c; z-index: 5; }
+  #hud-bottomleft { bottom: 16px; left: 16px; font-size: 18px; }
+  #hud-speed { font-weight: 700; }
+  #hud-msg { position: fixed; bottom: 64px; left: 50%; transform: translateX(-50%); font-size: 20px; font-weight: 700; color: #ffd34d; text-shadow: 0 1px 4px rgba(0,0,0,.9); z-index: 5; pointer-events: none; }
+  #hud-banner { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 10; pointer-events: none; }
+  #hud-banner .panel { background: rgba(10, 14, 28, 0.88); border: 1px solid #4a5568; border-radius: 12px; padding: 28px 40px; max-width: 640px; text-align: center; color: #eef1f5; }
+  #hud-banner h1 { margin: 0 0 10px; font-size: 42px; letter-spacing: 3px; color: #ffd34d; }
+  #hud-banner p { margin: 8px 0; font-size: 16px; line-height: 1.5; }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="TELUK HARAPAN: open-world crime game, Kota Teluk Harapan"></canvas>
+<canvas id="game" aria-label="Teluk Harapan: open-world crime 3D. WASD jalan dan nyetir, E masuk mobil, F pukul, klik tembak."></canvas>
+<div class="hud" id="hud-topleft">
+  <div id="hud-money">$100</div>
+  <div id="hud-hp">❤ 100</div>
+  <div id="hud-hpbar-wrap"><div id="hud-hpbar"></div></div>
+  <div id="hud-wanted">☆☆☆☆☆</div>
+</div>
+<div class="hud" id="hud-topcenter">
+  <div id="hud-day">Hari 1 — Senja</div>
+  <div id="hud-mission"></div>
+  <div id="hud-district"></div>
+</div>
+<canvas id="minimap" width="180" height="180" aria-label="Minimap"></canvas>
+<div class="hud" id="hud-bottomleft"><span id="hud-speed"></span> <span id="hud-ammo"></span></div>
+<div id="hud-msg"></div>
+<div id="hud-banner"><div class="panel" id="hud-banner-panel"></div></div>
 <p id="status" role="status" aria-live="polite"></p>
-
-<div id="hud">
-  <div id="hud-topleft" class="panel">
-    <div><b id="hud-money">$100</b> &nbsp;·&nbsp; <span id="hud-day">Hari 1 · Senja</span></div>
-    <div id="hpwrap"><div id="hud-hpbar"></div></div>
-    <div><span id="hud-hp">100 HP</span> &nbsp;·&nbsp; <span id="hud-ammo">24 peluru</span></div>
-  </div>
-  <div id="hud-wanted" class="panel">☆☆☆☆☆</div>
-  <div id="hud-mission" class="panel"></div>
-  <div id="hud-timer"></div>
-  <div id="banner"></div>
-  <div id="prompt"></div>
-  <div id="speed"></div>
-  <canvas id="minimap" width="190" height="190"></canvas>
-  <div id="crosshair"></div>
-</div>
-
-<div id="title-screen" class="overlay">
-  <div class="card">
-    <h1>TELUK HARAPAN</h1>
-    <h2>Tiga Hari di Kota Teluk Harapan — 12 misi, satu kota yang mengingatmu</h2>
-    <p>Raka pulang ke kota tempat ia dibesarkan — dan mendapati kota itu dikuasai Bang Darto.
-    Tiga hari, dua belas misi: antar paket, taksi, balap liar, tagih utang, kabur dari polisi,
-    sampai duel terakhir di Menara Kaca. Curi mobil, lawan geng, dan rebut kotanya kembali.</p>
-    <button id="btn-start">▶ Mulai Hari 1</button>
-    <button id="btn-continue" class="secondary" style="display:none">Lanjutkan</button>
-    <div class="controls">
-      WASD jalan / nyetir · Mouse putar kamera · E masuk mobil / interaksi · F curi mobil<br>
-      Spasi pukul · Klik tembak · Shift lari · P jeda · Uang disimpan otomatis tiap misi selesai
-    </div>
-  </div>
-</div>
-
-<div id="end-screen" class="overlay">
-  <div class="card">
-    <h1 id="end-title">TERTANGKAP!</h1>
-    <p id="end-text"></p>
-    <button id="btn-resume">Lanjut Main</button>
-    <button id="btn-restart" class="secondary">Mulai dari Awal</button>
-  </div>
-</div>
-
 <script src="./vendor/three.min.js"></script>
 <script type="module" src="./src/main.js"></script>
 </body>
