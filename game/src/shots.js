@@ -1,94 +1,93 @@
-// The screenshot scenes behind ?shot=start|play|chase|mission. Each one plays the real rules
-// forward from a fresh world for a fixed number of steps, steered by a simple autopilot, so the
-// frame is what real play looks like and the same seed always gives the same frame.
-import { STEP } from './config.js';
+// Adegan screenshot di balik ?shot=start|play|chase|mission. Setiap adegan menata dunia dari
+// keadaan segar ke satu frame yang sama setiap kali (posisi tetap, seed tetap): judul di atas
+// kota senja, mengemudi di Pelabuhan, kejar-kejaran malam dengan helikopter, dan misi final di
+// Mercusuar. Semua memakai aturan main yang sebenarnya, bukan gambar tempelan.
+import { PLACES } from './config.js';
+import { enterVehicle, spawnEnemy, spawnPoliceCar, stepWorld } from './world.js';
+import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 24;
-const CHASE_SECONDS = 18;
-const MISSION_SECONDS = 12;
-
-function angleTo(x1, z1, x2, z2) { return Math.atan2(z2 - z1, x2 - x1); }
-function angDiff(a, b) { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; }
-
-// Steer toward a target: returns the input for one step (on foot, running).
-function driveInput(world, tx, tz, driving) {
-  const p = world.state.player;
-  const want = angleTo(p.x, p.z, tx, tz);
-  const d = angDiff(p.angle, want);
-  const input = { up: true, down: false, left: false, right: false, run: !driving, enter: false, punch: false, shoot: false, buy: false };
-  if (d > 0.12) input.left = true;
-  else if (d < -0.12) input.right = true;
-  return input;
+function freshPlayer(world, x, z, angle) {
+  const p = world.player;
+  p.x = x; p.z = z; p.angle = angle; p.hp = p.maxHp; p.ammo = 24; p.onFoot = true; p.vehicleId = 0;
+  p.wanted = 0; p.speed = 0; p.money = 350;
+  world.enemies.length = 0;
+  for (const pc of world.police) pc.hp = 0;
+  world.police.length = 0;
+  world.heli.active = false;
 }
 
-function idleInput() {
-  return { up: false, down: false, left: false, right: false, run: false, enter: false, punch: false, shoot: false, buy: false };
+function driveCar(world, type, x, z, angle, speed) {
+  const v = world.vehicles.find((vv) => vv.type === type && vv.parked && vv.driver === 'none');
+  if (!v) return null;
+  v.x = x; v.z = z; v.angle = angle; v.speed = speed; v.hp = 100;
+  enterVehicle(world, v);
+  return v;
+}
+
+// Simulasikan beberapa detik agar lalu lintas dan pejalan kaki tersebar alami.
+function settle(world, seconds) {
+  const ctl = { fwd: false, back: false, left: false, right: false, run: false, shoot: false, camYaw: 0 };
+  for (let i = 0; i < seconds * 60; i++) stepWorld(world, 1 / 60, ctl, { wanted: world.player.wanted });
 }
 
 export function stageShot(name, world) {
-  world.reset();
-  const state = world.state;
-  if (name !== 'play' && name !== 'chase' && name !== 'mission') {
-    for (let i = 0; i < START_SECONDS / STEP; i += 1) world.step(STEP, idleInput());
-    return { screen: 'title' };
-  }
+  world.phase = name === 'chase' || name === 'mission' ? 2 : 0;
+  world.time = 0;
+  const p = world.player;
   if (name === 'play') {
-    world.setMission(1); // M2 Antar Paket
-    world.teleport(-192, 60, -Math.PI / 2, null);
-    for (let i = 0; i < PLAY_SECONDS / STEP; i += 1) {
-      const m = state.mission;
-      const t = m.target;
-      const input = t ? driveInput(world, t.x, t.z, false) : idleInput();
-      world.step(STEP, input);
-      if (state.over || state.won) break;
-    }
-    return { screen: 'play' };
+    freshPlayer(world, 0, -100, 0);
+    const car = driveCar(world, 'sedan', 0, -100, 0, 22);
+    settle(world, 2);
+    if (car) car.speed = 22; // settle meredam mobil; kembalikan laju untuk foto
+    world.player.speed = 22;
+    return {
+      screen: SCREEN_PLAY,
+      ui: {
+        missionTitle: 'M3 — Paket Kilat', objective: 'Antar paket ke Menara Kaca (45 dtk)',
+        marker: { x: 65, z: -130 }, banner: '', bannerUntil: 0,
+      },
+    };
   }
   if (name === 'chase') {
-    world.setMission(6); // M7 Kejar-kejaran (wanted 3)
-    const parked = state.cars.find((c) => c.kind === 'parked');
-    if (parked) world.teleport(parked.x, parked.z, 0, parked.id);
-    world.forceWanted(5);
-    const loop = [[-192, -192], [178, -192], [178, 178], [-192, 178]];
-    let wp = 0;
-    for (let i = 0; i < CHASE_SECONDS / STEP; i += 1) {
-      const p = state.player;
-      const [tx, tz] = loop[wp];
-      if (Math.hypot(p.x - tx, p.z - tz) < 12) wp = (wp + 1) % loop.length;
-      world.step(STEP, driveInput(world, loop[wp][0], loop[wp][1], true));
-      if (state.over || state.won) break;
-    }
-    return { screen: 'play' };
+    freshPlayer(world, 0, 65, 0);
+    const car = driveCar(world, 'sedan', 0, 65, 0, 30);
+    p.wanted = 5; p.money = 1250;
+    spawnPoliceCar(world, -7, 88).speed = 28;
+    spawnPoliceCar(world, 7, 92).speed = 28;
+    spawnPoliceCar(world, -14, 78).speed = 26;
+    world.heli.active = true; world.heli.x = 0; world.heli.z = 100; world.heli.y = 12;
+    settle(world, 1.5);
+    if (car) car.speed = 28;
+    world.player.speed = 28;
+    world.heli.x = 0; world.heli.z = 100; world.heli.y = 12;
+    return {
+      screen: SCREEN_PLAY,
+      ui: {
+        missionTitle: 'M14 — Mata Helikopter', objective: 'Tembus ke Mercusuar! (75 dtk)',
+        marker: { x: -195, z: -195 }, banner: '', bannerUntil: 0,
+      },
+    };
   }
-  // mission: M12 final vs Bang Darto, at night.
-  world.setMission(11);
-  world.teleport(-170, -44, 0, null);
-  for (let i = 0; i < MISSION_SECONDS / STEP; i += 1) {
-    const p = state.player;
-    let target = null;
-    let best = 1e9;
-    for (const t of state.thugs) {
-      const d = Math.hypot(t.x - p.x, t.z - p.z);
-      if (d < best) { best = d; target = t; }
-    }
-    let input;
-    if (target) {
-      input = driveInput(world, target.x, target.z, false);
-      if (best < 42) {
-        // Face the thug and shoot.
-        const want = angleTo(p.x, p.z, target.x, target.z);
-        const d = angDiff(p.angle, want);
-        input.left = d > 0.08;
-        input.right = d < -0.08;
-        input.shoot = Math.abs(d) < 0.3;
-        input.up = best > 12;
-      }
-    } else input = idleInput();
-    world.step(STEP, input);
-    if (state.over || state.won) break;
+  if (name === 'mission') {
+    freshPlayer(world, -182, -172, -2.52);
+    p.money = 2400;
+    spawnEnemy(world, 'boss', -192, -186, 320);
+    spawnEnemy(world, 'guard', -186, -192);
+    spawnEnemy(world, 'guard', -198, -182);
+    world.time = 4.4; // putar sorot mercusuar melintasi frame
+    return {
+      screen: SCREEN_PLAY,
+      ui: {
+        missionTitle: 'M15 — Darto Terakhir', objective: 'Kalahkan Bang Darto!',
+        marker: { x: -195, z: -195 }, banner: 'Bang Darto: "Kota ini milikku, Raka!"', bannerUntil: 99,
+      },
+    };
   }
-  // A fixed camera on the street looking west at the fight, so the frame is composed
-  // instead of depending on where the third-person camera ends up mid-combat.
-  return { screen: 'play', camera: { x: -150, y: 9, z: -44, tx: -185, ty: 2, tz: -44 } };
+  // start: judul di atas kota senja, Raka berdiri di barat daya menghadap langit Menara Kaca.
+  freshPlayer(world, -150, 170, Math.PI * 0.75);
+  world.time = 2;
+  return {
+    screen: SCREEN_TITLE,
+    ui: { missionTitle: '', objective: '', marker: null, banner: '', bannerUntil: 0 },
+  };
 }

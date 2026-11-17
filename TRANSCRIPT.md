@@ -1,29 +1,40 @@
-# TRANSCRIPT — TELUK HARAPAN (round 2 redo)
+# TELUK HARAPAN — build transcript (round 3)
 
-Built in one recorded agent session for make.fun's "Make GTA 6" bounty (gta6-01).
+Round 3 of the make.fun gta6-01 entry ("Make GTA 6"). Round 1 (5 missions) ranked 660/1,502
+(judge 983,796); round 2 (12 missions, 3 days) is in intake. Round 3 goes further: 15 missions,
+8 districts, a police helicopter, boats, a deeper economy, and a full boss finale — built to
+climb into the paid top 100.
 
-## What happened
-- Studied the competition first: the brief rewards completeness above all — an AI judge
-  compares games pairwise by their screenshots and an outline of their source. The live
-  leaderboard at build time had 1,216 entries; the top games led with scope (12 missions,
-  3 days, helicopters, radio, heists, shops, saves). Our round-1 entry sat at rank 516.
-- The previous round-2 build was lost unsealed when the VM restarted, so this session rebuilt
-  the round-2 improvements from scratch, from the kit starter only, under a new recording.
-- Designed the game from the brief: 12 story missions across 3 days (Senja → Maghrib →
-  Malam, lighting changes per day), 7 districts, traffic and pedestrian AI, police with a
-  1–5 wanted level, fists + pistol combat, a boss (Bang Darto) with henchmen, side jobs
-  (taxi, courier, debt collection, street racing), shops (clinic, ammo, repair), money,
-  HUD + minimap, start/pause/game-over/win screens, localStorage saves, and synthesized
-  WebAudio sound and music.
-- Wrote every game file fresh in this session (config, random, world, render, input, audio,
-  shots, main, index.html). Nothing was copied from round 1 or from any earlier build.
-  vendor/makefun-game.ts is untouched; three.js r152.2 is vendored under game/vendor/.
-- Verified headlessly in the headless shell: title → play, mission progress, entering and
-  driving a car, shooting, pausing, and all four deterministic screenshots (?shot=start,
-  play, chase, mission with seed 1), viewed one by one. Zero console exceptions.
+## What was built (all fresh in this session)
 
-## Files
-- `main.ts` — kit plumbing: copies game/ + screenshots/ to /output and writes dossier.json.
-- `game/` — the playable game (index.html + ES modules + vendored three.js).
-- `screenshots/` — 4 real renders of the game's own code, 1280×720 each.
-- `shots.json` — the four deterministic shot queries.
+- **City** (`game/src/world.js`): seeded 520×520 city, 8 districts, road grid, harbor with
+  patrol boats, beach, lighthouse hill; 24 traffic cars that drive the roads and brake for
+  cars ahead; 30 pedestrians who flee gunfire; police cars that chase and ram; a helicopter
+  that hunts at wanted 4–5; enemies that chase and shoot.
+- **Missions** (`game/src/main.js`): 15 missions, 5 per day, data-driven steps — go-to,
+  timed delivery, kill counts, chase (ram the target car), escort (defend the truck),
+  checkpoint race vs a rival, boat escape across the harbor, and a boss fight with Bang Darto
+  at the lighthouse. Day phases change the lighting: sunset → dusk → neon night. Win screen
+  after mission 15; "wasted" screen with a hospital fee on death.
+- **Systems**: 5 vehicle types (sedan, taxi, truck, motorcycle, speedboat), steal cars (F,
+  +1 wanted), 5-star wanted that decays out of sight, 5 side jobs (taxi, courier, debt,
+  race, fish delivery), shops (clinic, repair, gun store, safehouse) with upgrades
+  (armor, engine, damage), money, localStorage save, synthesized WebAudio (engine, siren,
+  gunshots, jingles).
+- **Rendering** (`game/src/render.js`): three.js r160 vendored offline; per-phase sun/fog/
+  lamps/neon; lighthouse searchlight; HUD (money, day, mission, objective, wanted stars,
+  health, ammo, speed) + 2D minimap with player, police, enemies and mission marker.
+- **Screenshots** (`game/src/shots.js`): 4 deterministic 1280×720 shots — title over the
+  sunset skyline, driving the central avenue, night helicopter chase at 101 km/h, final boss
+  fight at the lighthouse. Each verified headlessly with 0 console errors, and a full
+  playthrough probe (walk, drive, shoot, steal, wanted, missions 1/4/5/9/12/15, shop, side
+  job) passed before submitting.
+
+## Controls
+
+WASD/arrows drive & walk · E enter/exit car · F steal car · Space/click shoot · M start
+mission · Q shop (near clinic/repair/gun store/safehouse) · 1–5 buy · P pause.
+
+## Run
+
+`node serve.ts` → http://localhost:8080, or open `game/index.html` in desktop Chrome.

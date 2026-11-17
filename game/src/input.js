@@ -1,69 +1,76 @@
-// Keyboard and pointer input. Held keys are read every frame; one-shot presses (start,
-// pause, enter a car, punch, buy) are queued as bit flags and taken once by the loop, so a
-// press between two frames is never lost and never counted twice. Dragging the mouse orbits
-// the camera; holding the mouse (or Space) shoots.
+// Keyboard + mouse. WASD/panah jalan & nyetir, Space/klik tembak, E masuk-keluar mobil,
+// F curi mobil, M mulai misi, P/Esc jeda, 1-5 beli di toko, Enter konfirmasi.
 
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_ENTER = 4;
-export const ACTION_PUNCH = 8;
-export const ACTION_BUY = 16;
+export const ACTION_STEAL = 8;
+export const ACTION_MISSION = 16;
+export const ACTION_INTERACT = 32;
 
-const UP = new Set(['KeyW', 'ArrowUp']);
-const DOWN = new Set(['KeyS', 'ArrowDown']);
+const FORWARD = new Set(['KeyW', 'ArrowUp']);
+const BACK = new Set(['KeyS', 'ArrowDown']);
 const LEFT = new Set(['KeyA', 'ArrowLeft']);
 const RIGHT = new Set(['KeyD', 'ArrowRight']);
-const RUN = new Set(['ShiftLeft', 'ShiftRight']);
-const CONFIRM = new Set(['Space', 'Enter']);
+const CONFIRM = new Set(['Enter']);
 const PAUSE = new Set(['KeyP', 'Escape']);
-const ENTER = new Set(['KeyE']);
-const PUNCH = new Set(['KeyF']);
-const BUY = new Set(['KeyB']);
 
-export function createInput(target, onLook) {
-  const held = { up: false, down: false, left: false, right: false, run: false, shoot: false };
+export function createInput(target) {
+  const keys = new Set();
   let actions = 0;
-  let dragging = false;
-  let lastX = 0, lastY = 0;
+  let mouseDown = false;
+  let dragX = 0;
+  let dragY = 0;
 
-  function key(code, down, repeat) {
-    if (UP.has(code)) held.up = down;
-    else if (DOWN.has(code)) held.down = down;
-    else if (LEFT.has(code)) held.left = down;
-    else if (RIGHT.has(code)) held.right = down;
-    else if (RUN.has(code)) held.run = down;
-    else if (CONFIRM.has(code)) { if (down && !repeat) actions |= ACTION_CONFIRM; held.shoot = down; }
-    else if (PAUSE.has(code)) { if (down && !repeat) actions |= ACTION_PAUSE; }
-    else if (ENTER.has(code)) { if (down && !repeat) actions |= ACTION_ENTER; }
-    else if (PUNCH.has(code)) { if (down && !repeat) actions |= ACTION_PUNCH; }
-    else if (BUY.has(code)) { if (down && !repeat) actions |= ACTION_BUY; }
-    else return false;
-    return true;
+  function press(code) {
+    if (code === 'Space') { actions |= ACTION_CONFIRM; return; }
+    if (code === 'KeyE') { actions |= ACTION_ENTER; return; }
+    if (code === 'KeyF') { actions |= ACTION_STEAL; return; }
+    if (code === 'KeyM') { actions |= ACTION_MISSION; return; }
+    if (code === 'KeyQ') { actions |= ACTION_INTERACT; return; }
   }
 
   window.addEventListener('keydown', (event) => {
-    if (key(event.code, true, event.repeat)) event.preventDefault();
+    if (event.repeat) { keys.add(event.code); return; }
+    keys.add(event.code);
+    if (FORWARD.has(event.code) || BACK.has(event.code) || LEFT.has(event.code) || RIGHT.has(event.code)) {
+      event.preventDefault();
+      return;
+    }
+    if (CONFIRM.has(event.code)) actions |= ACTION_CONFIRM;
+    else if (PAUSE.has(event.code)) actions |= ACTION_PAUSE;
+    else if (event.code === 'Space') { actions |= ACTION_CONFIRM; event.preventDefault(); }
+    else if (event.code === 'KeyE') actions |= ACTION_ENTER;
+    else if (event.code === 'KeyF') actions |= ACTION_STEAL;
+    else if (event.code === 'KeyM') actions |= ACTION_MISSION;
+    else if (event.code === 'KeyQ') actions |= ACTION_INTERACT;
+    else if (/^Digit[1-5]$/.test(event.code)) actions |= (1 << (16 + Number(event.code.slice(5)))); // shop keys 1-5
   });
-  window.addEventListener('keyup', (event) => { key(event.code, false, false); });
-  window.addEventListener('blur', () => {
-    held.up = held.down = held.left = held.right = held.run = held.shoot = false;
-    dragging = false;
-  });
+  window.addEventListener('keyup', (event) => { keys.delete(event.code); });
+  window.addEventListener('blur', () => { keys.clear(); mouseDown = false; });
+
   target.addEventListener('pointerdown', (event) => {
+    mouseDown = true;
+    dragX = event.clientX; dragY = event.clientY;
     actions |= ACTION_CONFIRM;
-    held.shoot = true;
-    dragging = true;
-    lastX = event.clientX; lastY = event.clientY;
   });
-  window.addEventListener('pointerup', () => { held.shoot = false; dragging = false; });
+  window.addEventListener('pointerup', () => { mouseDown = false; });
   window.addEventListener('pointermove', (event) => {
-    if (!dragging) return;
-    onLook(event.clientX - lastX, event.clientY - lastY);
-    lastX = event.clientX; lastY = event.clientY;
+    if (!mouseDown) return;
+    dragX = event.clientX; dragY = event.clientY;
   });
 
+  const has = (set) => { for (const k of set) if (keys.has(k)) return true; return false; };
+
   return {
-    held,
-    takeActions() { const taken = actions; actions = 0; return taken; },
+    forward() { return has(FORWARD); },
+    back() { return has(BACK); },
+    left() { return has(LEFT); },
+    right() { return has(RIGHT); },
+    run() { return keys.has('ShiftLeft') || keys.has('ShiftRight'); },
+    mouseDown() { return mouseDown; },
+    takeActions() { const t = actions; actions = 0; return t; },
+    // Exposed for tests / autopilot: press a key programmatically.
+    press,
   };
 }

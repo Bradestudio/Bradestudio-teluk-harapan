@@ -3,50 +3,86 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Teluk Harapan — Open-World Crime 3D</title>
+<title>Teluk Harapan — Open World Crime</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0f22; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1026; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .hud { position: fixed; color: #eef1f5; text-shadow: 0 1px 3px rgba(0,0,0,.8); pointer-events: none; z-index: 5; }
-  #hud-topleft { top: 14px; left: 16px; font-size: 20px; line-height: 1.5; }
-  #hud-money { font-weight: 800; font-size: 26px; color: #7ddc7d; }
-  #hud-hpbar-wrap { width: 180px; height: 10px; background: rgba(0,0,0,.55); border: 1px solid #555; margin-top: 4px; }
-  #hud-hpbar { height: 100%; width: 100%; background: #e84d3d; }
-  #hud-wanted { color: #ffd34d; letter-spacing: 2px; font-size: 22px; }
-  #hud-topcenter { top: 12px; left: 50%; transform: translateX(-50%); text-align: center; font-size: 17px; }
-  #hud-day { font-weight: 700; color: #ffd34d; }
-  #hud-mission { margin-top: 2px; font-size: 15px; color: #cfe3ff; }
-  #hud-district { font-size: 13px; color: #9aa3b2; }
-  #minimap { position: fixed; top: 14px; right: 16px; width: 180px; height: 180px; border: 2px solid rgba(255,255,255,.35); background: #14161c; z-index: 5; }
-  #hud-bottomleft { bottom: 16px; left: 16px; font-size: 18px; }
-  #hud-speed { font-weight: 700; }
-  #hud-msg { position: fixed; bottom: 64px; left: 50%; transform: translateX(-50%); font-size: 20px; font-weight: 700; color: #ffd34d; text-shadow: 0 1px 4px rgba(0,0,0,.9); z-index: 5; pointer-events: none; }
-  #hud-banner { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 10; pointer-events: none; }
-  #hud-banner .panel { background: rgba(10, 14, 28, 0.88); border: 1px solid #4a5568; border-radius: 12px; padding: 28px 40px; max-width: 640px; text-align: center; color: #eef1f5; }
-  #hud-banner h1 { margin: 0 0 10px; font-size: 42px; letter-spacing: 3px; color: #ffd34d; }
-  #hud-banner p { margin: 8px 0; font-size: 16px; line-height: 1.5; }
+  #hud-topleft { top: 14px; left: 16px; font-size: 17px; line-height: 1.5; }
+  #hud-money { font-size: 26px; font-weight: 800; color: #ffd23f; }
+  #hud-day { font-size: 13px; letter-spacing: 2px; color: #ff9a52; font-weight: 700; }
+  #hud-mission { font-weight: 700; }
+  #hud-objective { font-size: 14px; color: #cfe3ff; }
+  #hud-wanted { position: fixed; top: 14px; right: 16px; font-size: 26px; color: #ff4444; letter-spacing: 3px; z-index: 5; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+  #hud-bottomleft { bottom: 16px; left: 16px; font-size: 16px; }
+  #hud-hpbar-wrap { width: 220px; height: 12px; background: rgba(0,0,0,.55); border: 1px solid #555; border-radius: 6px; overflow: hidden; margin-top: 4px; }
+  #hud-hpbar { height: 100%; width: 100%; background: linear-gradient(90deg, #e5534b, #ff8a5c); }
+  #hud-speed { font-size: 20px; font-weight: 700; margin-top: 6px; }
+  #minimap { position: fixed; right: 16px; bottom: 16px; width: 180px; height: 180px; border: 2px solid rgba(255,255,255,.35); border-radius: 8px; background: #10141c; z-index: 5; }
+  #hud-banner { position: fixed; top: 22%; left: 50%; transform: translateX(-50%); font-size: 26px; font-weight: 800; color: #ffd23f; text-align: center; text-shadow: 0 2px 8px rgba(0,0,0,.9); z-index: 6; opacity: 0; transition: opacity .3s; pointer-events: none; max-width: 80%; }
+  .screen { position: fixed; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #eef1f5; background: rgba(5,8,20,.58); z-index: 10; padding: 20px; }
+  .screen h1 { font-size: 54px; margin: 0 0 8px; letter-spacing: 3px; color: #ffd23f; text-shadow: 0 3px 18px rgba(0,0,0,.9); }
+  .screen h2 { font-size: 30px; margin: 0 0 10px; color: #ffd23f; }
+  .screen p { font-size: 17px; max-width: 640px; line-height: 1.6; margin: 6px 0; }
+  .screen .keys { font-size: 14px; color: #cfe3ff; background: rgba(255,255,255,.08); border-radius: 8px; padding: 12px 18px; margin-top: 14px; line-height: 1.9; }
+  .screen .cta { font-size: 20px; font-weight: 700; color: #35d0ff; margin-top: 18px; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  #shop-items { font-size: 17px; line-height: 2.1; background: rgba(255,255,255,.08); border-radius: 8px; padding: 14px 22px; margin-top: 12px; }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="Teluk Harapan: open-world crime 3D. WASD jalan dan nyetir, E masuk mobil, F pukul, klik tembak."></canvas>
+<canvas id="game" aria-label="Teluk Harapan: open-world crime 3D. WASD jalan dan nyetir, E masuk mobil, Space tembak, M mulai misi."></canvas>
+<p id="status" role="status" aria-live="polite"></p>
+
 <div class="hud" id="hud-topleft">
-  <div id="hud-money">$100</div>
+  <div id="hud-money">$0</div>
+  <div id="hud-day">HARI 1 — SENJA</div>
+  <div id="hud-mission"></div>
+  <div id="hud-objective"></div>
+</div>
+<div id="hud-wanted">☆☆☆☆☆</div>
+<div class="hud" id="hud-bottomleft">
   <div id="hud-hp">❤ 100</div>
   <div id="hud-hpbar-wrap"><div id="hud-hpbar"></div></div>
-  <div id="hud-wanted">☆☆☆☆☆</div>
+  <div id="hud-ammo">🔫 24</div>
+  <div id="hud-speed"></div>
 </div>
-<div class="hud" id="hud-topcenter">
-  <div id="hud-day">Hari 1 — Senja</div>
-  <div id="hud-mission"></div>
-  <div id="hud-district"></div>
+<canvas id="minimap" width="180" height="180"></canvas>
+<div id="hud-banner"></div>
+
+<div class="screen" id="screen-title">
+  <h1>TELUK HARAPAN</h1>
+  <p>Tiga hari. Satu kota. Satu nama yang harus dijatuhkan: <b>Bang Darto</b>.</p>
+  <p>Raka pulang kampung dan mendapati Teluk Harapan dikuasai preman. 15 misi lintas 3 hari — dari senja, maghrib, sampai malam — dengan kejar-kejaran polisi, helikopter, perahu, dan balapan liar.</p>
+  <div class="keys">WASD / Panah — jalan &amp; nyetir &nbsp;•&nbsp; E — masuk/keluar mobil &nbsp;•&nbsp; F — curi mobil<br>Space / Klik — tembak &nbsp;•&nbsp; M — mulai misi &nbsp;•&nbsp; Q — toko (di dekat klinik/bengkel/dll) &nbsp;•&nbsp; P — jeda</div>
+  <div class="cta">Tekan SPACE atau KLIK untuk mulai</div>
 </div>
-<canvas id="minimap" width="180" height="180" aria-label="Minimap"></canvas>
-<div class="hud" id="hud-bottomleft"><span id="hud-speed"></span> <span id="hud-ammo"></span></div>
-<div id="hud-msg"></div>
-<div id="hud-banner"><div class="panel" id="hud-banner-panel"></div></div>
-<p id="status" role="status" aria-live="polite"></p>
-<script src="./vendor/three.min.js"></script>
+
+<div class="screen" id="screen-pause">
+  <h2>JEDA</h2>
+  <p>Teluk Harapan menunggumu.</p>
+  <div class="cta">Tekan P untuk lanjut</div>
+</div>
+
+<div class="screen" id="screen-over">
+  <h2>TEWAS</h2>
+  <p>Raka dibawa ke klinik. Biaya rumah sakit 10% dari uangmu. Bang Darto masih berkuasa.</p>
+  <div class="cta">Tekan ENTER untuk bangkit</div>
+</div>
+
+<div class="screen" id="screen-win">
+  <h2>TELUK BEBAS!</h2>
+  <p>Bang Darto tumbang di Mercusuar. Lampu mercusuar menyala lagi — dan kota ini milik warganya.</p>
+  <p>Terima kasih sudah bermain. Tekan Enter untuk main lagi.</p>
+  <div class="cta">Tekan ENTER</div>
+</div>
+
+<div class="screen" id="screen-shop">
+  <h2 id="shop-title">TOKO</h2>
+  <div id="shop-items"></div>
+</div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
