@@ -1,146 +1,266 @@
-// TUNING + DATA — Teluk Harapan round 3.
-// Kota Teluk Harapan: kota fiksi 100% original (bukan Rockstar/GTA). Raka pulang kampung dan
-// berperang dengan Bang Darto selama tiga hari: Senja -> Maghrib -> Malam.
+// TELUK HARAPAN — config.js
+// Semua data tuning game: dunia, distrik, misi, ekonomi, kendaraan, senjata.
+// Ditulis fresh untuk round 4 (revisi): 5 story mission yang dalam, bukan
+// misi banyak yang tipis. Tidak ada aset Rockstar/GTA — semua nama, karakter,
+// dan tempat adalah fiksi original Indonesia.
 
-export const STEP = 1 / 60;
-export const SAVE_KEY = 'teluk-harapan.save.v3';
-export const BEST_KEY = 'teluk-harapan.best.v3';
+export const CONFIG = Object.freeze({
+  title: 'TELUK HARAPAN',
+  subtitle: 'Kota pesisir. Utang keluarga. Satu jalan pulang.',
+  version: '4.0.0',
+  saveKey: 'teluk-harapan-save-v1',
 
-// Kota: bujur sangkar 520x520, jalan grid tiap 65 unit. Air di barat (x < -230) dan selatan (z > 230).
-export const CITY = { half: 260, waterWest: -230, waterSouth: 230, roadEvery: 65 };
-export const ROADS = [-195, -130, -65, 0, 65, 130, 195];
+  // ---- dunia ----
+  world: {
+    size: 640, // kota 640 x 640 unit, pusat (0,0)
+    roadEvery: 64, // jarak antar jalan utama
+    streetEvery: 32, // jarak antar gang
+    avenueWidth: 13,
+    streetWidth: 8,
+    sidewalk: 3,
+    seed: 20261118,
+    waterWest: -320, // garis pantai barat (x < -260 = laut)
+    beachSouth: 300, // garis pantai selatan (z > 280 = pasir/laut)
+  },
 
-export const PHASES = [
-  { name: 'HARI 1 — SENJA', sky: 0xff9a52, fog: 0x2a1a2e, sun: 0xffb36b, sunPos: [-140, 60, 90], ambient: 0x8a6a72, hemi: 0.55, lampOn: false, neon: false },
-  { name: 'HARI 2 — MAGHRIB', sky: 0x7a4a8a, fog: 0x241a33, sun: 0xc96bb0, sunPos: [-60, 35, 140], ambient: 0x5a4a6a, hemi: 0.42, lampOn: true, neon: true },
-  { name: 'HARI 3 — MALAM', sky: 0x0b1026, fog: 0x0a0e22, sun: 0x8fa8ff, sunPos: [80, 90, -120], ambient: 0x3d4a6a, hemi: 0.38, lampOn: true, neon: true },
-];
+  // ---- 5 distrik, masing-masing identitas kuat ----
+  districts: [
+    {
+      id: 'pelabuhan',
+      name: 'Pelabuhan',
+      x0: -320, z0: -320, x1: -128, z1: 128,
+      palette: ['#7a6a58', '#8c7a63', '#5d6b73', '#9a8a70', '#6b7a86'],
+      ground: '#6f6a5e',
+      landmark: 'Dermaga & kontainer',
+      desc: 'Dermaga tua, kontainer berkarat, derek raksasa, kapal nelayan.',
+    },
+    {
+      id: 'kota-lama',
+      name: 'Kota Lama',
+      x0: -128, z0: -320, x1: 128, z1: 64,
+      palette: ['#b98a4e', '#a87c46', '#c9a35f', '#8f6b3d', '#d4b06a'],
+      ground: '#8a7a5c',
+      landmark: 'Pasar & menara jam',
+      desc: 'Gang sempit, pasar pagi, rumah toko tua, menara jam 1927.',
+    },
+    {
+      id: 'pesisir',
+      name: 'Pesisir',
+      x0: -128, z0: 64, x1: 128, z1: 320,
+      palette: ['#e8d9a0', '#d9c27f', '#f2e6b8', '#cbb26a', '#e0c98f'],
+      ground: '#cbb98a',
+      landmark: 'Pantai & mercusuar',
+      desc: 'Pantai berpasir, pohon kelapa, hotel kecil, mercusuar putih.',
+    },
+    {
+      id: 'industri',
+      name: 'Kawasan Industri',
+      x0: 128, z0: -320, x1: 320, z1: 128,
+      palette: ['#6e6e6e', '#7d7d7d', '#5a5a5a', '#8a8a8a', '#4d4d4d'],
+      ground: '#5f5f5c',
+      landmark: 'Gudang 7 & cerobong',
+      desc: 'Gudang baja, cerobong asap, truk kontainer, pagar kawat.',
+    },
+    {
+      id: 'bukit',
+      name: 'Bukit',
+      x0: 128, z0: 128, x1: 320, z1: 320,
+      palette: ['#7d9b6a', '#8aa878', '#6b8a5e', '#93b184', '#5f7d55'],
+      ground: '#6f7d5a',
+      landmark: 'Vila & rumah aman',
+      desc: 'Jalan menanjak, vila beratap genteng, taman, rumah aman.',
+    },
+  ],
 
-export const DISTRICTS = [
-  { name: 'Pelabuhan', x0: -260, z0: -130, x1: -130, z1: 130, style: 'harbor' },
-  { name: 'Pasar Lama', x0: -130, z0: -260, x1: 0, z1: -65, style: 'market' },
-  { name: 'Menara Kaca', x0: 0, z0: -260, x1: 130, z1: -65, style: 'cbd' },
-  { name: 'Perumahan Bukit', x0: 130, z0: -260, x1: 260, z1: -65, style: 'houses' },
-  { name: 'Pantai Senja', x0: -260, z0: 130, x1: -130, z1: 260, style: 'beach' },
-  { name: 'Gudang Timur', x0: 130, z0: 65, x1: 260, z1: 260, style: 'warehouse' },
-  { name: 'Alun-Alun', x0: -65, z0: -65, x1: 65, z1: 65, style: 'plaza' },
-  { name: 'Mercusuar', x0: -260, z0: -260, x1: -130, z1: -130, style: 'lighthouse' },
-];
+  // ---- fase hari (3 hari cerita) ----
+  phases: {
+    senja: {
+      label: 'Senja',
+      sky: 0xff9a52, fog: 0xf7b06a, sun: 0xffb36b, sunIntensity: 1.5,
+      sunPos: [-180, 60, 120], ambient: 0x8a7a9a, ambientIntensity: 0.55,
+      hemi: 0xffc890, hemiIntensity: 0.5, lamps: false, stars: false,
+    },
+    maghrib: {
+      label: 'Maghrib',
+      sky: 0x7a4a8a, fog: 0x9a6a8a, sun: 0xff7a5a, sunIntensity: 0.9,
+      sunPos: [-220, 22, 60], ambient: 0x6a5a8a, ambientIntensity: 0.5,
+      hemi: 0xc07a9a, hemiIntensity: 0.45, lamps: true, stars: false,
+    },
+    malam: {
+      label: 'Malam',
+      sky: 0x0a1230, fog: 0x0e1a3a, sun: 0x9ab8ff, sunIntensity: 0.35,
+      sunPos: [120, 140, -80], ambient: 0x2a3a6a, ambientIntensity: 0.55,
+      hemi: 0x3a4a7a, hemiIntensity: 0.4, lamps: true, stars: true,
+    },
+  },
+  days: [
+    { day: 1, phase: 'senja', label: 'Hari 1 — Senja' },
+    { day: 2, phase: 'maghrib', label: 'Hari 2 — Maghrib' },
+    { day: 3, phase: 'malam', label: 'Hari 3 — Malam' },
+  ],
 
-// Tempat-tempat penting (x, z).
-export const PLACES = {
-  rumah: { x: 195, z: -195, label: 'Rumah Raka' },
-  pasar: { x: -65, z: -130, label: 'Pasar Lama' },
-  menara: { x: 65, z: -130, label: 'Menara Kaca' },
-  pelabuhan: { x: -195, z: 0, label: 'Pelabuhan' },
-  dermaga: { x: -225, z: 130, label: 'Dermaga Nelayan' },
-  pantai: { x: -130, z: 195, label: 'Pantai Senja' },
-  gudang: { x: 195, z: 130, label: 'Gudang Timur' },
-  alun: { x: 0, z: 0, label: 'Alun-Alun' },
-  mercusuar: { x: -195, z: -195, label: 'Mercusuar' },
-  bukit: { x: 195, z: -65, label: 'Perumahan Bukit' },
-  klinik: { x: -65, z: 0, label: 'Klinik' },
-  bengkel: { x: 130, z: 65, label: 'Bengkel' },
-  tokoSenjata: { x: 0, z: -65, label: 'Toko Senjata' },
-  rumahAman: { x: 195, z: -130, label: 'Rumah Aman' },
-};
+  // ---- pemain ----
+  player: {
+    walkSpeed: 7,
+    runSpeed: 12,
+    health: 100,
+    armor: 0,
+    startMoney: 120,
+    radius: 0.9,
+    height: 1.8,
+  },
 
-export const VEHICLES = {
-  sedan: { name: 'Sedan', top: 34, accel: 22, turn: 2.4, hp: 100, color: 0x3a7bd5, price: 0 },
-  taxi: { name: 'Taksi', top: 32, accel: 20, turn: 2.5, hp: 90, color: 0xf2c94c, price: 0 },
-  truck: { name: 'Truk', top: 24, accel: 13, turn: 1.7, hp: 220, color: 0x8a94a6, price: 0 },
-  moto: { name: 'Motor', top: 42, accel: 30, turn: 3.4, hp: 55, color: 0xe5534b, price: 0 },
-  boat: { name: 'Perahu Laju', top: 38, accel: 18, turn: 2.0, hp: 120, color: 0x2ec4b6, price: 0 },
-  police: { name: 'Patroli', top: 36, accel: 26, turn: 2.8, hp: 120, color: 0x1c2a4a, price: 0 },
-};
+  // ---- kendaraan ----
+  cars: {
+    sedan: { name: 'Sedan Tua', accel: 16, topSpeed: 34, brake: 30, steer: 1.9, grip: 0.92, hp: 100, color: 0x7a3a2e, price: 0 },
+    taksi: { name: 'Taksi Kuning', accel: 14, topSpeed: 30, brake: 28, steer: 1.8, grip: 0.9, hp: 90, color: 0xd9a821, price: 0 },
+    pickup: { name: 'Pikap', accel: 13, topSpeed: 28, brake: 26, steer: 1.6, grip: 0.88, hp: 130, color: 0x3a5a7a, price: 0 },
+    sport: { name: 'Sport Merah', accel: 22, topSpeed: 46, brake: 34, steer: 2.3, grip: 0.95, hp: 80, color: 0xa31e22, price: 0 },
+    truk: { name: 'Truk Kontainer', accel: 9, topSpeed: 22, brake: 20, steer: 1.3, grip: 0.85, hp: 180, color: 0x5a6a5a, price: 0 },
+    polisi: { name: 'Mobil Polisi', accel: 20, topSpeed: 42, brake: 34, steer: 2.2, grip: 0.94, hp: 120, color: 0x1e3a8a, price: 0 },
+    perahu: { name: 'Perahu Cepat', accel: 18, topSpeed: 40, brake: 22, steer: 2.0, grip: 0.9, hp: 90, color: 0xe8e8e8, price: 0 },
+  },
 
-export const PLAYER = {
-  walkSpeed: 11, runSpeed: 17, radius: 1.1, hp: 100, maxHp: 100,
-  pistolDamage: 34, pistolRange: 55, fireRate: 0.22, startAmmo: 24, maxAmmo: 120,
-  fistDamage: 25, fistRange: 2.6, fistRate: 0.45,
-};
+  // ---- senjata ----
+  weapons: {
+    fists: { name: 'Tangan Kosong', damage: 12, rate: 2.2, range: 2.2, ammo: Infinity, auto: false, price: 0 },
+    pistol: { name: 'Pistol', damage: 22, rate: 3.5, range: 55, ammo: 12, auto: false, price: 150, ammoPrice: 20 },
+    smg: { name: 'SMG', damage: 14, rate: 11, range: 45, ammo: 32, auto: true, price: 400, ammoPrice: 35 },
+  },
 
-export const ECONOMY = {
-  clinicHeal: 50, ammoPrice: 20, ammoAmount: 12, repairPrice: 30,
-  armorPrice: 200, armorHp: 60, enginePrice: 300, engineBoost: 1.25,
-  safehousePrice: 500, damagePrice: 250, damageBoost: 1.5,
-};
+  // ---- ekonomi / toko ----
+  shops: [
+    { id: 'bengkel', name: 'Bengkel Sari', kind: 'repair', x: -40, z: -96, district: 'kota-lama', blurb: 'Perbaiki mobil & lapis baja' },
+    { id: 'senjata', name: 'Toko Senjata Jaya', kind: 'weapons', x: 176, z: -160, district: 'industri', blurb: 'Pistol, SMG, amunisi, rompi' },
+    { id: 'klinik', name: 'Klinik Harapan', kind: 'clinic', x: 48, z: 208, district: 'pesisir', blurb: 'Obat & rawat luka' },
+    { id: 'rumah', name: 'Rumah Aman', kind: 'safehouse', x: 224, z: 224, district: 'bukit', blurb: 'Simpan game & tidur' },
+  ],
+  prices: {
+    repair: 30, armorPlate: 100, heal: 50, fullHeal: 90,
+    pistolAmmo: 20, smgAmmo: 35, bribe: 200,
+  },
 
-export const WANTED = {
-  decaySeconds: 25, maxPolice: 4, heliAt: 4, policeSpawnDist: 70, loseDist: 130,
-};
+  // ---- wanted ----
+  wanted: {
+    decaySeconds: 22,
+    policePerStar: 2,
+    heliAtStars: 3,
+    maxStars: 5,
+    bustedFine: 150,
+    hospitalFee: 50,
+  },
 
-// 15 misi, 5 per hari. steps: goto | timed | kill | chase | escort | race | boat | boss
-export const MISSIONS = [
-  { id: 1, day: 0, title: 'Pulang ke Teluk', brief: 'Raka pulang. Temui Pak Haji di Pasar Lama.', reward: 100,
-    steps: [{ t: 'goto', x: -65, z: -130, r: 8, label: 'Temui Pak Haji di Pasar Lama' }] },
-  { id: 2, day: 0, title: 'Taksi Pertama', brief: 'Antar penumpang dari Pasar ke Alun-Alun.', reward: 80,
-    steps: [
-      { t: 'goto', x: -65, z: -130, r: 8, label: 'Jemput penumpang di Pasar Lama' },
-      { t: 'goto', x: 0, z: 0, r: 8, label: 'Antar ke Alun-Alun' },
-    ] },
-  { id: 3, day: 0, title: 'Paket Kilat', brief: 'Paket buat Menara Kaca. Jangan telat!', reward: 120,
-    steps: [{ t: 'timed', x: 65, z: -130, r: 8, seconds: 45, label: 'Antar paket ke Menara Kaca (45 dtk)' }] },
-  { id: 4, day: 0, title: 'Tagih Utang', brief: 'Dua preman Darto nunggak di Gudang Timur.', reward: 150,
-    steps: [
-      { t: 'goto', x: 195, z: 130, r: 10, label: 'Datangi Gudang Timur' },
-      { t: 'kill', count: 2, kind: 'thug', x: 195, z: 130, label: 'Hadapi 2 preman (0/2)' },
-    ] },
-  { id: 5, day: 0, title: 'Balapan Senja', brief: 'Si Licin menantang balap keliling Alun-Alun.', reward: 200,
-    steps: [{ t: 'race', points: [[0, 0], [130, 0], [130, 130], [0, 130], [0, 0]], label: 'Menangi balapan (cek poin 0/5)' }] },
-  { id: 6, day: 1, title: 'Antar Ikan Segar', brief: 'Ikan dari Dermaga harus sampai Pasar sebelum maghrib.', reward: 150,
-    steps: [{ t: 'timed', x: -65, z: -130, r: 8, seconds: 60, from: 'dermaga', label: 'Ikan Dermaga -> Pasar (60 dtk)' }] },
-  { id: 7, day: 1, title: 'Kawal Truk', brief: 'Kawal truk Pak Haji dari Pelabuhan ke Gudang.', reward: 200,
-    steps: [{ t: 'escort', from: [-195, 0], to: [195, 130], label: 'Kawal truk ke Gudang Timur' }] },
-  { id: 8, day: 1, title: 'Gudang Terbakar', brief: 'Anak buah Darto membakar gudang. Rebut petinya!', reward: 250,
-    steps: [
-      { t: 'goto', x: 195, z: 130, r: 10, label: 'Ke Gudang Timur' },
-      { t: 'kill', count: 4, kind: 'guard', x: 195, z: 130, label: 'Lumpuhkan penjaga (0/4)' },
-      { t: 'goto', x: -195, z: 0, r: 8, label: 'Bawa peti ke Pelabuhan' },
-    ] },
-  { id: 9, day: 1, title: 'Kejar Si Licin', brief: 'Si Licin kabur naik sedan. Tabrak sampai berhenti!', reward: 250,
-    steps: [{ t: 'chase', label: 'Tabrak mobil Si Licin sampai mogok' }] },
-  { id: 10, day: 1, title: 'Pesan dari Darto', brief: 'Darto mengirim pesan: penyergapan di Alun-Alun.', reward: 300,
-    steps: [
-      { t: 'goto', x: 0, z: 0, r: 10, label: 'Ke Alun-Alun (polisi mengejar!)' },
-      { t: 'kill', count: 2, kind: 'thug', x: 0, z: 0, label: 'Hadapi penyergap (0/2)' },
-    ] },
-  { id: 11, day: 2, title: 'Jalan Tikus', brief: 'Lewat jalan tikus: tiga titik sebelum tengah malam.', reward: 250,
-    steps: [{ t: 'timed', points: [[0, 0], [-130, 195], [195, -65]], seconds: 90, label: 'Tiga titik dalam 90 dtk (0/3)' }] },
-  { id: 12, day: 2, title: 'Pelarian Perahu', brief: 'Naik perahu dari Dermaga, susuri pelabuhan sampai ujung.', reward: 300,
-    steps: [{ t: 'boat', from: [-225, 130], to: [-240, -130], label: 'Susuri pelabuhan dengan perahu' }] },
-  { id: 13, day: 2, title: 'Serbu Markas', brief: 'Markas Darto di Menara Kaca. Enam penjaga.', reward: 350,
-    steps: [
-      { t: 'goto', x: 65, z: -130, r: 10, label: 'Ke Menara Kaca' },
-      { t: 'kill', count: 6, kind: 'guard', x: 65, z: -130, label: 'Lumpuhkan penjaga (0/6)' },
-    ] },
-  { id: 14, day: 2, title: 'Mata Helikopter', brief: 'Helikopter polisi di atas. Tembus ke Mercusuar!', reward: 350,
-    steps: [{ t: 'timed', x: -195, z: -195, r: 8, seconds: 75, label: 'Tembus ke Mercusuar (75 dtk, heli mengejar!)' }] },
-  { id: 15, day: 2, title: 'Darto Terakhir', brief: 'Bang Darto menunggu di Mercusuar. Akhiri ini.', reward: 500,
-    steps: [
-      { t: 'goto', x: -195, z: -195, r: 10, label: 'Ke Mercusuar' },
-      { t: 'boss', x: -195, z: -195, label: 'Kalahkan Bang Darto!' },
-      { t: 'goto', x: -195, z: -195, r: 6, label: 'Nyalakan lampu mercusuar — Teluk bebas!' },
-    ] },
-];
+  // ---- lalu lintas & pejalan kaki ----
+  traffic: { cars: 22, peds: 30, pedFleeRadius: 18 },
 
-// Kerja sampingan (marker di peta, mulai otomatis saat masuk): taksi, kurir, utang, balap, ikan.
-export const SIDE_JOBS = [
-  { id: 'taxi', name: 'Taksi', x: -65, z: -65, reward: 60, brief: 'Antar penumpang ke Pantai Senja.' },
-  { id: 'kurir', name: 'Kurir', x: 65, z: 65, reward: 50, brief: 'Antar paket ke Bukit (40 dtk).' },
-  { id: 'utang', name: 'Tagih Utang', x: 130, z: 195, reward: 80, brief: 'Dua preman di Gudang Timur.' },
-  { id: 'balap', name: 'Balap Liar', x: 0, z: 130, reward: 100, brief: 'Balapan 4 cek poin keliling kota.' },
-  { id: 'ikan', name: 'Antar Ikan', x: -195, z: 195, reward: 70, brief: 'Ikan Dermaga ke Pasar (50 dtk).' },
-];
+  // ---- misi: 5 story mission, masing-masing arc lengkap ----
+  missions: [
+    {
+      id: 'm1',
+      title: 'M1 — PULANG',
+      day: 1, phase: 'senja',
+      brief: 'Raka pulang ke Teluk Harapan setelah 3 tahun. Jemput Dimas di dermaga, antar ke Bengkel Sari. Dua penagih utang membuntuti.',
+      dialogue: [
+        { who: 'Dimas', text: 'Bang Raka! Akhirnya pulang juga. Mereka... mereka nyari aku, Bang.' },
+        { who: 'Raka', text: 'Siapa? Lorong? Utang berapa, Dim?' },
+        { who: 'Dimas', text: 'Aku nggak bisa bayar. Bos Anggara yang pegang. Cepat, ke bengkel Sari dulu.' },
+        { who: 'Sari', text: 'Raka! Mobil bapakmu masih di sini. Hati-hati — dua orang itu ngikutin dari tadi.' },
+      ],
+      objectives: [
+        { id: 'drive', text: 'Naik mobil & jemput Dimas di dermaga', kind: 'reach', x: -272, z: -64, radius: 8 },
+        { id: 'deliver', text: 'Antar Dimas ke Bengkel Sari', kind: 'reach', x: -40, z: -96, radius: 10 },
+        { id: 'lose', text: 'Lepas dari kejaran penagih utang', kind: 'escape', seconds: 12 },
+      ],
+      reward: 150, unlock: 'pistol_hint',
+    },
+    {
+      id: 'm2',
+      title: 'M2 — UTANG LUNAS?',
+      day: 1, phase: 'senja',
+      brief: 'Sari memberi pistol. Ambil paket di Pasar Kota Lama, antar ke Gudang 7. Penagih Lorong menyergap di pasar.',
+      dialogue: [
+        { who: 'Sari', text: 'Ambil pistol ini. Paketnya di Pasar, kios nomor 7. Jangan sampai jatuh ke tangan Lorong.' },
+        { who: 'Raka', text: 'Paket apa sih ini?' },
+        { who: 'Sari', text: 'Bukti utang Dimas. Kalau sampai ke Gudang 7, Anggara nggak bisa ngapa-ngapain.' },
+        { who: 'Penagih', text: 'Itu dia! Ambil paketnya! Jangan biarkan dia lolos!' },
+      ],
+      objectives: [
+        { id: 'pickup', text: 'Ambil paket di Pasar Kota Lama', kind: 'reach', x: -64, z: -224, radius: 8 },
+        { id: 'ambush', text: 'Hadapi penyergapan di pasar', kind: 'defeat', count: 3 },
+        { id: 'deliver', text: 'Antar paket ke Gudang 7', kind: 'reach', x: 208, z: -78, radius: 10 },
+      ],
+      reward: 250, unlock: 'pistol',
+    },
+    {
+      id: 'm3',
+      title: 'M3 — BLOKADE',
+      day: 2, phase: 'maghrib',
+      brief: 'Anggara menjebak Raka: polisi mengira Raka perampok bank. Wanted 3 bintang. Tembus blokade di jembatan, sampai ke Rumah Aman di Bukit.',
+      dialogue: [
+        { who: 'Radio Polisi', text: 'Perhatian semua unit: tersangka perampokan bank, sedan merah, arah Jembatan Harapan.' },
+        { who: 'Raka', text: 'Ini jebakan Anggara. Aku harus sampai ke Bukit sebelum mereka menangkapku.' },
+        { who: 'Sari (telepon)', text: 'Raka, jangan berhenti! Blokade di jembatan — cari celah di sisi kanan!' },
+        { who: 'Radio Polisi', text: 'Helikopter sudah di udara. Tersangka menuju Bukit. Jangan biarkan lolos.' },
+      ],
+      objectives: [
+        { id: 'bridge', text: 'Tembus blokade di Jembatan Harapan', kind: 'reach', x: 64, z: 96, radius: 12 },
+        { id: 'escape', text: 'Lepas dari kejaran polisi', kind: 'escape', seconds: 15 },
+        { id: 'safehouse', text: 'Sampai ke Rumah Aman di Bukit', kind: 'reach', x: 224, z: 224, radius: 10 },
+      ],
+      reward: 300, unlock: 'smg_hint',
+      startWanted: 3,
+    },
+    {
+      id: 'm4',
+      title: 'M4 — GUDANG 7',
+      day: 2, phase: 'maghrib',
+      brief: 'Dimas ditahan di Gudang 7. Serbu gudang, kalahkan 6 anak buah Anggara, bebaskan Dimas.',
+      dialogue: [
+        { who: 'Dimas (telepon)', text: 'Bang... mereka bawa aku ke Gudang 7. Cepat... sebelum Anggara datang.' },
+        { who: 'Raka', text: 'Bertahan, Dim. Aku datang.' },
+        { who: 'Anak Buah', text: 'Ada penyusup! Jangan biarkan dia masuk ke ruang tahanan!' },
+        { who: 'Dimas', text: 'Bang Raka! Kuncinya di meja penjaga. Ayo pergi dari sini!' },
+      ],
+      objectives: [
+        { id: 'infiltrate', text: 'Masuk ke Gudang 7', kind: 'reach', x: 208, z: -78, radius: 10 },
+        { id: 'clear', text: 'Kalahkan anak buah Anggara', kind: 'defeat', count: 6 },
+        { id: 'rescue', text: 'Bebaskan Dimas', kind: 'reach', x: 224, z: -80, radius: 6 },
+      ],
+      reward: 400, unlock: 'smg',
+    },
+    {
+      id: 'm5',
+      title: 'M5 — BOS ANGGARA',
+      day: 3, phase: 'malam',
+      brief: 'Finale. Anggara kabur naik perahu dari dermaga. Kejar dengan perahu cepat, hadapi dia di dermaga malam, akhiri semuanya.',
+      dialogue: [
+        { who: 'Anggara', text: 'Raka Pradana. Kau pikir bisa menghancurkanku di kotaku sendiri?' },
+        { who: 'Raka', text: 'Kotamu? Ini kota kami semua. Dan utang Dimas lunas malam ini.' },
+        { who: 'Anggara', text: 'Kalau begitu, kejar aku — kalau bisa.' },
+        { who: 'Sari', text: 'Perahu cepat sudah siap di dermaga. Hati-hati, Raka. Ini yang terakhir.' },
+        { who: 'Raka', text: 'Teluk Harapan... aku pulang untuk ini.' },
+      ],
+      objectives: [
+        { id: 'boat', text: 'Naik perahu cepat di dermaga', kind: 'reach', x: -288, z: 32, radius: 8 },
+        { id: 'chase', text: 'Kejar perahu Anggara', kind: 'chase', target: 'anggara', radius: 14 },
+        { id: 'boss', text: 'Kalahkan Bos Anggara di dermaga', kind: 'defeat', count: 1, boss: true },
+      ],
+      reward: 1000, unlock: 'win',
+    },
+  ],
 
-export const PALETTE = {
-  road: 0x23262e, roadLine: 0xd8d8d8, sidewalk: 0x3a3f4a, ground: 0x2e3329,
-  water: 0x1a5f7a, sand: 0xc2a878, plaza: 0x4a4f5e,
-  building: [0x8a7f70, 0x6b7a8a, 0x9a8a6a, 0x7a6a8a, 0x5a6a7a, 0xa89a80],
-  glass: 0x2a4a6a, windowLit: 0xffd27a, windowDark: 0x1a2436,
-  tree: 0x2a6a3a, trunk: 0x5a4028, lamp: 0xffe9a8,
-  player: 0x35d0ff, playerDark: 0x1a6a8a, enemy: 0xe5534b, boss: 0x8a1a2a,
-  heli: 0x1c2a4a, boat: 0x2ec4b6, marker: 0xffd23f,
-};
+  // ---- kontrol ----
+  controls: {
+    onFoot: 'WASD jalan · Shift lari · E masuk mobil · Klik tembak · R ganti senjata · M peta',
+    driving: 'W gas · S rem/mundur · A/D belok · Spasi rem tangan · E keluar mobil · C kamera',
+    general: 'P jeda · H bantuan · F5 simpan cepat',
+  },
 
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+  // ---- screenshot (deterministik, seed 1) ----
+  shots: [
+    { name: '1-start.jpg', query: '?shot=start&seed=1', caption: 'Layar judul di atas Teluk Harapan saat senja' },
+    { name: '2-play.jpg', query: '?shot=play&seed=1', caption: 'Mengemudi di Pelabuhan saat senja' },
+    { name: '3-chase.jpg', query: '?shot=chase&seed=1', caption: 'Kejaran polisi di Maghrib, helikopter di udara' },
+    { name: '4-end.jpg', query: '?shot=end&seed=1', caption: 'Finale malam di dermaga — perahu cepat' },
+  ],
+});

@@ -1,93 +1,113 @@
-// Adegan screenshot di balik ?shot=start|play|chase|mission. Setiap adegan menata dunia dari
-// keadaan segar ke satu frame yang sama setiap kali (posisi tetap, seed tetap): judul di atas
-// kota senja, mengemudi di Pelabuhan, kejar-kejaran malam dengan helikopter, dan misi final di
-// Mercusuar. Semua memakai aturan main yang sebenarnya, bukan gambar tempelan.
-import { PLACES } from './config.js';
-import { enterVehicle, spawnEnemy, spawnPoliceCar, stepWorld } from './world.js';
-import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// TELUK HARAPAN — shots.js
+// Adegan screenshot deterministik (?shot=start|play|chase|end&seed=1): tiap
+// adegan memainkan aturan game yang sebenarnya dari seed yang sama (bukan
+// gambar tempelan), maju sejumlah langkah tetap dengan input skrip, lalu
+// membekukan frame. Seed sama -> frame sama. Ditulis fresh untuk round 4.
 
-function freshPlayer(world, x, z, angle) {
-  const p = world.player;
-  p.x = x; p.z = z; p.angle = angle; p.hp = p.maxHp; p.ammo = 24; p.onFoot = true; p.vehicleId = 0;
-  p.wanted = 0; p.speed = 0; p.money = 350;
-  world.enemies.length = 0;
-  for (const pc of world.police) pc.hp = 0;
-  world.police.length = 0;
-  world.heli.active = false;
+const STEP = 1 / 60;
+
+// Input sintetis untuk autopilot adegan.
+function scriptedInput(throttle, steer, handbrake) {
+  return { throttle, steer, handbrake: !!handbrake, actions: [] };
 }
 
-function driveCar(world, type, x, z, angle, speed) {
-  const v = world.vehicles.find((vv) => vv.type === type && vv.parked && vv.driver === 'none');
-  if (!v) return null;
-  v.x = x; v.z = z; v.angle = angle; v.speed = speed; v.hp = 100;
-  enterVehicle(world, v);
-  return v;
+function driveForward(game, seconds, steerFn) {
+  const steps = Math.round(seconds / STEP);
+  for (let i = 0; i < steps; i += 1) {
+    const steer = steerFn ? steerFn(i * STEP) : 0;
+    game.step(STEP, scriptedInput(1, steer, false));
+  }
 }
 
-// Simulasikan beberapa detik agar lalu lintas dan pejalan kaki tersebar alami.
-function settle(world, seconds) {
-  const ctl = { fwd: false, back: false, left: false, right: false, run: false, shoot: false, camYaw: 0 };
-  for (let i = 0; i < seconds * 60; i++) stepWorld(world, 1 / 60, ctl, { wanted: world.player.wanted });
+function idleSteps(game, seconds) {
+  const steps = Math.round(seconds / STEP);
+  for (let i = 0; i < steps; i += 1) {
+    game.step(STEP, scriptedInput(0, 0, false));
+  }
 }
 
-export function stageShot(name, world) {
-  world.phase = name === 'chase' || name === 'mission' ? 2 : 0;
-  world.time = 0;
-  const p = world.player;
+/**
+ * Siapkan adegan bernama pada `game` yang sudah boot. Mengembalikan layar
+ * yang harus ditampilkan ('title' | 'play').
+ */
+export function stageShot(name, game) {
+  const g = game;
+  if (name === 'start') {
+    // Layar judul: kamera mengorbit di atas kota saat senja, lalu lintas jalan.
+    g.applyPhase('senja');
+    g.setDay(1);
+    g.state = 'title';
+    g.cameraOrbit = { angle: 0.6, radius: 220, height: 90, center: { x: -40, z: 0 } };
+    idleSteps(g, 4);
+    return { screen: 'title' };
+  }
+
   if (name === 'play') {
-    freshPlayer(world, 0, -100, 0);
-    const car = driveCar(world, 'sedan', 0, -100, 0, 22);
-    settle(world, 2);
-    if (car) car.speed = 22; // settle meredam mobil; kembalikan laju untuk foto
-    world.player.speed = 22;
-    return {
-      screen: SCREEN_PLAY,
-      ui: {
-        missionTitle: 'M3 — Paket Kilat', objective: 'Antar paket ke Menara Kaca (45 dtk)',
-        marker: { x: 65, z: -130 }, banner: '', bannerUntil: 0,
-      },
-    };
+    // Mengemudi di Pelabuhan saat senja: M1 dimulai, dialog dilewati,
+    // Raka mengendarai sedan ke arah dermaga.
+    g.applyPhase('senja');
+    g.setDay(1);
+    g.startFreeRoam();
+    g.spawnPlayerCar('sedan', -240, -64, Math.PI / 2);
+    g.enterNearestCar();
+    g.renderer.cameraMode = 1; // kamera jauh: jalan + kota terlihat lebar
+    // Lurus di avenue z=-64 (jalan utama Pelabuhan) — tanpa belok supaya
+    // mobil tetap di tengah jalan dan framing bagus.
+    driveForward(g, 5, () => 0);
+    return { screen: 'play' };
   }
+
   if (name === 'chase') {
-    freshPlayer(world, 0, 65, 0);
-    const car = driveCar(world, 'sedan', 0, 65, 0, 30);
-    p.wanted = 5; p.money = 1250;
-    spawnPoliceCar(world, -7, 88).speed = 28;
-    spawnPoliceCar(world, 7, 92).speed = 28;
-    spawnPoliceCar(world, -14, 78).speed = 26;
-    world.heli.active = true; world.heli.x = 0; world.heli.z = 100; world.heli.y = 12;
-    settle(world, 1.5);
-    if (car) car.speed = 28;
-    world.player.speed = 28;
-    world.heli.x = 0; world.heli.z = 100; world.heli.y = 12;
-    return {
-      screen: SCREEN_PLAY,
-      ui: {
-        missionTitle: 'M14 — Mata Helikopter', objective: 'Tembus ke Mercusuar! (75 dtk)',
-        marker: { x: -195, z: -195 }, banner: '', bannerUntil: 0,
-      },
-    };
+    // Kejaran polisi di Maghrib: wanted 3, helikopter + mobil polisi
+    // mengejar di Jembatan Harapan.
+    g.applyPhase('maghrib');
+    g.setDay(2);
+    g.startFreeRoam();
+    // Pindahkan pemain ke jembatan dulu — mobil harus di dekat pemain
+    // supaya enterNearestCar berhasil.
+    g.player.x = 40;
+    g.player.z = 92;
+    g.player.mesh.position.set(40, 0, 92);
+    g.spawnPlayerCar('sport', 40, 96, Math.PI / 2);
+    g.enterNearestCar();
+    g.police.setStars(3, g.time);
+    g.police.placeRoadblock(96, 96, Math.PI / 2);
+    g.renderer.cameraMode = 1; // kamera jauh: mobil + blokade + jalan terlihat
+    driveForward(g, 2, () => 0);
+    // Helikopter ke depan mobil dan lebih rendah supaya terlihat di frame.
+    if (g.police.heli) {
+      g.police.heli.angle = 0.3;
+      g.police.heli.y = 20;
+    }
+    idleSteps(g, 0.3);
+    return { screen: 'play' };
   }
-  if (name === 'mission') {
-    freshPlayer(world, -182, -172, -2.52);
-    p.money = 2400;
-    spawnEnemy(world, 'boss', -192, -186, 320);
-    spawnEnemy(world, 'guard', -186, -192);
-    spawnEnemy(world, 'guard', -198, -182);
-    world.time = 4.4; // putar sorot mercusuar melintasi frame
-    return {
-      screen: SCREEN_PLAY,
-      ui: {
-        missionTitle: 'M15 — Darto Terakhir', objective: 'Kalahkan Bang Darto!',
-        marker: { x: -195, z: -195 }, banner: 'Bang Darto: "Kota ini milikku, Raka!"', bannerUntil: 99,
-      },
-    };
+
+  if (name === 'end') {
+    // Finale malam di dermaga: Raka di perahu cepat, perahu Anggara di depan,
+    // mercusuar menyala di latar.
+    g.applyPhase('malam');
+    g.setDay(3);
+    g.startFreeRoam();
+    // Pindahkan pemain ke dermaga dulu — perahu harus di dekat pemain.
+    g.player.x = -288;
+    g.player.z = 58;
+    g.player.mesh.position.set(-288, 0, 58);
+    g.spawnPlayerBoat(-288, 60);
+    g.enterNearestCar();
+    const anggara = g.renderer.makeCarMesh('perahu', 0x8a2a2a);
+    anggara.position.set(-292, -0.2, 10);
+    anggara.rotation.y = Math.PI;
+    g.renderer.scene.add(anggara);
+    g._shotProps = [anggara];
+    g.renderer.cameraMode = 1;
+    driveForward(g, 3, () => 0);
+    idleSteps(g, 0.5);
+    return { screen: 'play' };
   }
-  // start: judul di atas kota senja, Raka berdiri di barat daya menghadap langit Menara Kaca.
-  freshPlayer(world, -150, 170, Math.PI * 0.75);
-  world.time = 2;
-  return {
-    screen: SCREEN_TITLE,
-    ui: { missionTitle: '', objective: '', marker: null, banner: '', bannerUntil: 0 },
-  };
+
+  // Nama tak dikenal -> layar judul.
+  g.applyPhase('senja');
+  g.state = 'title';
+  return { screen: 'title' };
 }
