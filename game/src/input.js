@@ -1,133 +1,82 @@
 // TELUK HARAPAN — input.js
-// Keyboard + mouse. Tombol yang ditahan dibaca sebagai state (gerak, gas, lari);
-// tombol sekali tekan masuk antrean aksi (masuk mobil, tembak, jeda, ganti
-// senjata) supaya tidak ada yang hilang di antara frame. Ditulis fresh.
+// Keyboard + mouse, dengan edge detection (pressed sekali) dan binding
+// yang bisa dibaca HUD untuk layar bantuan.
 
-export const ACT = Object.freeze({
-  ENTER_CAR: 'enterCar',
-  SHOOT: 'shoot',
-  SWITCH_WEAPON: 'switchWeapon',
-  PAUSE: 'pause',
-  CONFIRM: 'confirm',
-  INTERACT: 'interact',
-  CAMERA: 'camera',
-  MAP: 'map',
-  HELP: 'help',
-  QUICKSAVE: 'quicksave',
-  RELOAD: 'reload',
-});
+export const KEY_BINDINGS = [
+  { keys: ['W', 'A', 'S', 'D'], label: 'Bergerak / Mengemudi' },
+  { keys: ['Mouse'], label: 'Arahkan & tembak (klik kiri)' },
+  { keys: ['E'], label: 'Masuk / keluar mobil, interaksi' },
+  { keys: ['F'], label: 'Pukul (saat jalan kaki)' },
+  { keys: ['R'], label: 'Isi ulang senjata' },
+  { keys: ['H'], label: 'Pakai kotak P3K' },
+  { keys: ['Shift'], label: 'Nitro (bila terpasang)' },
+  { keys: ['Spasi'], label: 'Rem tangan' },
+  { keys: ['1', '2', '3', '4'], label: 'Ganti senjata' },
+  { keys: ['M'], label: 'Peta besar' },
+  { keys: ['Esc', 'P'], label: 'Jeda / menu' },
+  { keys: ['Enter'], label: 'Lanjut dialog / mulai misi' },
+];
 
-// Tombol -> aksi sekali tekan.
-const PRESS_ACTIONS = {
-  KeyE: ACT.ENTER_CAR,
-  KeyF: ACT.INTERACT,
-  KeyR: ACT.SWITCH_WEAPON,
-  KeyP: ACT.PAUSE,
-  Escape: ACT.PAUSE,
-  Space: ACT.CONFIRM,
-  Enter: ACT.CONFIRM,
-  KeyC: ACT.CAMERA,
-  KeyM: ACT.MAP,
-  KeyH: ACT.HELP,
-  F5: ACT.QUICKSAVE,
-  KeyQ: ACT.RELOAD,
-};
+export function createInput(canvas) {
+  const input = {
+    keys: new Set(),
+    pressed: new Set(), // ditekan pada frame ini saja
+    mouse: { x: 0, y: 0, down: false, clicked: false, worldX: 0, worldY: 0 },
+    anyKey: false,
+  };
 
-// Tombol gerak (dibaca sebagai state).
-const MOVE_KEYS = new Set([
-  'KeyW', 'KeyA', 'KeyS', 'KeyD',
-  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-  'ShiftLeft', 'ShiftRight',
-]);
+  const keyName = (e) => {
+    if (e.key === ' ') return 'Space';
+    if (e.key.length === 1) return e.key.toUpperCase();
+    return e.key;
+  };
 
-export class Input {
-  constructor(canvas) {
-    this.held = new Set();
-    this.queue = [];
-    this.mouseX = 0;
-    this.mouseY = 0;
-    this.mouseDown = false;
-    this._shootHeld = false;
+  window.addEventListener('keydown', (e) => {
+    const k = keyName(e);
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.key)) {
+      e.preventDefault();
+    }
+    if (!e.repeat) {
+      input.pressed.add(k);
+      input.anyKey = true;
+    }
+    input.keys.add(k);
+  });
+  window.addEventListener('keyup', (e) => {
+    input.keys.delete(keyName(e));
+  });
+  window.addEventListener('blur', () => {
+    input.keys.clear();
+    input.mouse.down = false;
+  });
 
-    window.addEventListener('keydown', (event) => {
-      if (event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) return;
-      if (MOVE_KEYS.has(event.code)) {
-        this.held.add(event.code);
-        event.preventDefault();
-      }
-      const action = PRESS_ACTIONS[event.code];
-      if (action && !event.repeat) {
-        this.queue.push(action);
-        event.preventDefault();
-      }
-    });
-    window.addEventListener('keyup', (event) => {
-      this.held.delete(event.code);
-    });
-    window.addEventListener('blur', () => {
-      this.held.clear();
-      this.mouseDown = false;
-      this._shootHeld = false;
-    });
+  canvas.addEventListener('mousemove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    input.mouse.x = e.clientX - r.left;
+    input.mouse.y = e.clientY - r.top;
+  });
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) {
+      input.mouse.down = true;
+      input.mouse.clicked = true;
+    }
+  });
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) input.mouse.down = false;
+  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    canvas.addEventListener('pointerdown', (event) => {
-      this.mouseDown = true;
-      this._shootHeld = true;
-      this.mouseX = event.clientX;
-      this.mouseY = event.clientY;
-      this.queue.push(ACT.SHOOT);
-    });
-    canvas.addEventListener('pointerup', () => {
-      this.mouseDown = false;
-      this._shootHeld = false;
-    });
-    canvas.addEventListener('pointermove', (event) => {
-      this.mouseX = event.clientX;
-      this.mouseY = event.clientY;
-    });
-    // Mencegah menu konteks saat klik kanan (dipakai untuk membidik).
-    canvas.addEventListener('contextmenu', (event) => event.preventDefault());
-  }
+  input.down = (k) => input.keys.has(k) || input.keys.has(k.toUpperCase());
+  input.wasPressed = (k) => input.pressed.has(k) || input.pressed.has(k.toUpperCase());
+  input.axisX = () => (input.down('D') || input.down('ArrowRight') ? 1 : 0) - (input.down('A') || input.down('ArrowLeft') ? 1 : 0);
+  input.axisY = () => (input.down('S') || input.down('ArrowDown') ? 1 : 0) - (input.down('W') || input.down('ArrowUp') ? 1 : 0);
 
-  /** -1..1 maju/mundur (W/S). */
-  throttle() {
-    const fwd = this.held.has('KeyW') || this.held.has('ArrowUp');
-    const back = this.held.has('KeyS') || this.held.has('ArrowDown');
-    return (fwd ? 1 : 0) - (back ? 1 : 0);
-  }
+  // Dipanggil di akhir tiap frame oleh main loop.
+  input.endFrame = () => {
+    input.pressed.clear();
+    input.mouse.clicked = false;
+    input.anyKey = false;
+  };
 
-  /** -1..1 belok kiri/kanan (A/D). */
-  steer() {
-    const left = this.held.has('KeyA') || this.held.has('ArrowLeft');
-    const right = this.held.has('KeyD') || this.held.has('ArrowRight');
-    return (right ? 1 : 0) - (left ? 1 : 0);
-  }
-
-  /** Vektor jalan kaki (x: kanan, z: maju) relatif arah hadap kamera. */
-  moveVector() {
-    return {
-      x: this.steer(),
-      z: -this.throttle(),
-      run: this.held.has('ShiftLeft') || this.held.has('ShiftRight'),
-    };
-  }
-
-  get handbrake() {
-    return this.held.has('Space');
-  }
-
-  get firing() {
-    return this._shootHeld;
-  }
-
-  /** Ambil semua aksi sekali tekan sejak panggilan terakhir. */
-  drainActions() {
-    const out = this.queue;
-    this.queue = [];
-    return out;
-  }
-
-  hasAction(list, name) {
-    return list.indexOf(name) !== -1;
-  }
+  return input;
 }

@@ -1,313 +1,261 @@
 // TELUK HARAPAN — world.js
-// Generator kota: jalan, blok bangunan, 5 distrik, sungai + 3 jembatan,
-// landmark, dan graf jalan untuk AI lalu lintas. Murni data (tanpa three.js)
-// supaya bisa dites di Node. Semua angka datang dari CONFIG + seed.
-// Ditulis fresh untuk round 4.
+// Membangun kota: jalan, blok bangunan, taman, pelabuhan, pasar, landmark,
+// dan semua query spasial (distrik di titik, tabrakan bangunan, jalan terdekat).
 
-import { CONFIG } from './config.js';
-import { SeededRandom } from './random.js';
+import { WORLD, DISTRICTS, SHOPS } from './config.js';
+import { clamp, dist } from './random.js';
 
-const W = CONFIG.world;
-
-// Jalan utama (avenue) — posisi sumbu jalan.
-const AVE_X = [-256, -192, -128, -64, 0, 96, 160, 224, 288];
-const AVE_Z = [-256, -192, -128, -64, 0, 64, 128, 192, 256];
-// Sungai: strip air utara-selatan di antara avenue x=0 dan x=96.
-const RIVER = { x0: 48, x1: 80, z0: -320, z1: 320 };
-// Jembatan (jalan melintasi sungai) pada avenue z ini.
-const BRIDGES = [-160, 32, 96];
-// Laut: barat (pelabuhan) dan selatan (pantai).
-const SEA_WEST = { x0: -320, x1: -272, z0: -320, z1: 320 };
-const SEA_SOUTH = { x0: -320, x1: 320, z0: 288, z1: 320 };
-
-function rectsOverlap(a, b) {
-  return a.x0 < b.x1 && a.x1 > b.x0 && a.z0 < b.z1 && a.z1 > b.z0;
+export function districtAt(x, y) {
+  for (const d of DISTRICTS) {
+    const b = d.bounds;
+    if (x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1) return d;
+  }
+  return DISTRICTS[2];
 }
 
-function pointInRect(x, z, r) {
-  return x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1;
-}
-
-/** Distrik yang memuat titik (x, z); null bila di luar distrik (laut/sungai). */
-export function districtAt(x, z) {
-  for (const d of CONFIG.districts) {
-    if (x >= d.x0 && x < d.x1 && z >= d.z0 && z < d.z1) return d;
+export function isOnRoad(x, y) {
+  for (const ax of WORLD.avenues) {
+    if (Math.abs(x - ax) < WORLD.roadHalfWidth + WORLD.sidewalk) return true;
   }
-  return null;
-}
-
-/** Apakah titik berada di atas jalan (avenue / jembatan). */
-export function isOnRoad(x, z) {
-  const half = W.avenueWidth / 2;
-  for (const ax of AVE_X) {
-    if (Math.abs(x - ax) <= half && !pointInRect(x, z, RIVER)) return true;
-  }
-  for (const az of AVE_Z) {
-    if (Math.abs(z - az) <= half) return true;
-  }
-  // Jembatan: di atas sungai, pada avenue z jembatan.
-  if (pointInRect(x, z, RIVER)) {
-    for (const bz of BRIDGES) if (Math.abs(z - bz) <= half) return true;
+  for (const sy of WORLD.streets) {
+    if (Math.abs(y - sy) < WORLD.roadHalfWidth + WORLD.sidewalk) return true;
   }
   return false;
 }
 
-/** Apakah titik bisa dilalui kendaraan darat (bukan air, bukan bangunan). */
-export function isLand(x, z) {
-  if (pointInRect(x, z, SEA_WEST) || pointInRect(x, z, SEA_SOUTH)) return false;
-  if (pointInRect(x, z, RIVER)) {
-    // Di atas sungai hanya bisa lewat jembatan (avenue z jembatan).
-    const half = W.avenueWidth / 2;
-    for (const bz of BRIDGES) if (Math.abs(z - bz) <= half) return true;
-    return false;
-  }
-  return x >= -320 && x <= 320 && z >= -320 && z <= 320;
-}
-
-export function buildCity(seed) {
-  const rng = new SeededRandom(seed);
-  const buildings = [];
-  const colliders = []; // {x0,z0,x1,z1, h} — AABB penghalang
-  const props = []; // {kind, x, z, ...} — dekorasi + landmark
-  const roadNodes = []; // persimpangan {x, z, id}
-  const nodeIndex = new Map();
-  const adjacency = new Map(); // id -> [id]
-
-  // ---- graf jalan: node di tiap persimpangan avenue ----
-  let nextId = 0;
-  function addNode(x, z) {
-    const key = `${x},${z}`;
-    if (nodeIndex.has(key)) return nodeIndex.get(key);
-    const id = nextId;
-    nextId += 1;
-    nodeIndex.set(key, id);
-    roadNodes.push({ id, x, z });
-    adjacency.set(id, []);
-    return id;
-  }
-  function link(a, b) {
-    if (a === b) return;
-    if (!adjacency.get(a).includes(b)) adjacency.get(a).push(b);
-    if (!adjacency.get(b).includes(a)) adjacency.get(b).push(a);
-  }
-  for (const ax of AVE_X) {
-    for (const az of AVE_Z) {
-      if (!isLand(ax, az)) continue;
-      addNode(ax, az);
-    }
-  }
-  // Sisi sepanjang avenue yang sama (vertikal).
-  for (const ax of AVE_X) {
-    const column = AVE_Z.map((az) => ({ az, id: nodeIndex.get(`${ax},${az}`) }))
-      .filter((n) => n.id !== undefined);
-    for (let i = 0; i < column.length - 1; i += 1) link(column[i].id, column[i + 1].id);
-  }
-  // Sisi sepanjang avenue yang sama (horizontal); sungai hanya bisa diseberangi di jembatan.
-  for (const az of AVE_Z) {
-    const row = AVE_X.map((ax) => ({ ax, id: nodeIndex.get(`${ax},${az}`) }))
-      .filter((n) => n.id !== undefined);
-    for (let i = 0; i < row.length - 1; i += 1) {
-      const a = row[i];
-      const b = row[i + 1];
-      const crossesRiver = (a.ax < RIVER.x0 && b.ax > RIVER.x1) || (a.ax > RIVER.x1 && b.ax < RIVER.x0);
-      if (crossesRiver && !BRIDGES.includes(az)) continue;
-      link(a.id, b.id);
-    }
-  }
-
-  // ---- bangunan: satu blok = sel di antara dua avenue ----
-  const halfRoad = W.avenueWidth / 2 + 2;
-  for (let xi = 0; xi < AVE_X.length - 1; xi += 1) {
-    for (let zi = 0; zi < AVE_Z.length - 1; zi += 1) {
-      const bx0 = AVE_X[xi] + halfRoad;
-      const bx1 = AVE_X[xi + 1] - halfRoad;
-      const bz0 = AVE_Z[zi] + halfRoad;
-      const bz1 = AVE_Z[zi + 1] - halfRoad;
-      const block = { x0: bx0, x1: bx1, z0: bz0, z1: bz1 };
-      if (rectsOverlap(block, RIVER) || rectsOverlap(block, SEA_WEST) || rectsOverlap(block, SEA_SOUTH)) continue;
-      const cx = (bx0 + bx1) / 2;
-      const cz = (bz0 + bz1) / 2;
-      const district = districtAt(cx, cz);
-      if (!district) continue;
-      const count = district.id === 'bukit' ? rng.int(1, 2) : rng.int(1, 4);
-      for (let b = 0; b < count; b += 1) {
-        const w = rng.range(10, Math.min(24, (bx1 - bx0) / count));
-        const d = rng.range(10, Math.min(24, (bz1 - bz0) / count));
-        const x = rng.range(bx0 + w / 2 + 1, bx1 - w / 2 - 1);
-        const z = rng.range(bz0 + d / 2 + 1, bz1 - d / 2 - 1);
-        if (x - w / 2 < bx0 || x + w / 2 > bx1 || z - d / 2 < bz0 || z + d / 2 > bz1) continue;
-        const h = district.id === 'industri'
-          ? rng.range(8, 16)
-          : district.id === 'bukit'
-            ? rng.range(6, 12)
-            : district.id === 'kota-lama'
-              ? rng.range(7, 18)
-              : rng.range(8, 30);
-        const color = rng.color(district.palette);
-        const building = { x, z, w, d, h, color, district: district.id, roof: rng.chance(0.3) };
-        buildings.push(building);
-        colliders.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2, h });
-      }
-    }
-  }
-
-  // ---- landmark & prop (posisi tetap, identitas kota) ----
-  function addProp(prop) {
-    props.push(prop);
-    if (prop.solid) {
-      colliders.push({
-        x0: prop.x - (prop.hw || 2), x1: prop.x + (prop.hw || 2),
-        z0: prop.z - (prop.hd || 2), z1: prop.z + (prop.hd || 2), h: prop.h || 6,
-      });
-    }
-  }
-  // Mercusuar di ujung barat daya (pesisir).
-  addProp({ kind: 'lighthouse', x: -288, z: 272, h: 34, hw: 4, hd: 4, solid: true });
-  // Menara jam di alun-alun Kota Lama.
-  addProp({ kind: 'clocktower', x: -96, z: -160, h: 26, hw: 5, hd: 5, solid: true });
-  // Pasar: deretan kios di Kota Lama.
-  for (let i = 0; i < 8; i += 1) {
-    addProp({ kind: 'stall', x: -80 + (i % 4) * 10, z: -232 + Math.floor(i / 4) * 10, h: 3.2, hw: 3, hd: 3, solid: true });
-  }
-  // Derek pelabuhan.
-  addProp({ kind: 'crane', x: -256, z: -160, h: 30, hw: 4, hd: 4, solid: true });
-  addProp({ kind: 'crane', x: -256, z: 64, h: 30, hw: 4, hd: 4, solid: true });
-  // Kontainer di pelabuhan.
-  const containerColors = ['#a34a2a', '#2a6a8a', '#7a8a2a', '#8a2a4a'];
-  for (let i = 0; i < 14; i += 1) {
-    addProp({
-      kind: 'container',
-      x: rng.range(-264, -140), z: rng.range(-288, 96),
-      h: 2.6, hw: 6, hd: 1.4, solid: true,
-      color: containerColors[i % containerColors.length], rot: rng.chance(0.5) ? 0 : Math.PI / 2,
-    });
-  }
-  // Cerobong pabrik di Industri.
-  addProp({ kind: 'chimney', x: 224, z: -192, h: 28, hw: 3, hd: 3, solid: true });
-  addProp({ kind: 'chimney', x: 248, z: -176, h: 22, hw: 3, hd: 3, solid: true });
-  // Gudang 7 (besar, lokasi misi 2 & 4).
-  addProp({ kind: 'warehouse', x: 208, z: -96, h: 12, hw: 18, hd: 12, solid: true });
-  addProp({ kind: 'warehouse', x: 256, z: -64, h: 10, hw: 14, hd: 10, solid: true });
-  // Dermaga kayu menjorok ke laut barat.
-  addProp({ kind: 'pier', x: -292, z: 32, h: 1, hw: 20, hd: 6, solid: false });
-  // Perahu nelayan di dermaga.
-  for (let i = 0; i < 5; i += 1) {
-    addProp({ kind: 'boat', x: rng.range(-308, -282), z: -16 + i * 18, h: 2, hw: 2, hd: 5, solid: false, rot: rng.range(-0.3, 0.3) });
-  }
-  // Pohon kelapa di Pesisir.
-  for (let i = 0; i < 26; i += 1) {
-    const x = rng.range(-120, 120);
-    const z = rng.range(96, 280);
-    if (!isLand(x, z) || isOnRoad(x, z)) continue;
-    addProp({ kind: 'palm', x, z, h: rng.range(7, 11), hw: 0.6, hd: 0.6, solid: false });
-  }
-  // Pohon rindang di Bukit.
-  for (let i = 0; i < 30; i += 1) {
-    const x = rng.range(140, 300);
-    const z = rng.range(140, 300);
-    if (!isLand(x, z) || isOnRoad(x, z)) continue;
-    addProp({ kind: 'tree', x, z, h: rng.range(5, 9), hw: 0.8, hd: 0.8, solid: false });
-  }
-  // Lampu jalan di tiap persimpangan.
-  for (const node of roadNodes) {
-    if (rng.chance(0.6)) {
-      addProp({ kind: 'lamp', x: node.x + 8, z: node.z + 8, h: 6, hw: 0.4, hd: 0.4, solid: false });
-    }
-  }
-  // Bangku & halte di Kota Lama.
-  for (let i = 0; i < 10; i += 1) {
-    addProp({ kind: 'bench', x: rng.range(-120, 120), z: rng.range(-280, 40), h: 1, hw: 1.5, hd: 0.6, solid: false });
-  }
-
-  // ---- titik spawn ----
-  const carSpawns = [];
-  for (const node of roadNodes) {
-    if (rng.chance(0.35)) carSpawns.push({ x: node.x + rng.range(-4, 4), z: node.z + rng.range(-4, 4), heading: rng.angle() });
-  }
-  const pedSpawns = [];
-  for (let i = 0; i < 60; i += 1) {
-    const x = rng.range(-260, 300);
-    const z = rng.range(-260, 280);
-    if (!isLand(x, z) || isOnRoad(x, z)) continue;
-    pedSpawns.push({ x, z });
-  }
-
-  return {
-    seed,
-    buildings,
-    colliders,
-    props,
-    roadNodes,
-    adjacency,
-    carSpawns,
-    pedSpawns,
-    river: RIVER,
-    bridges: BRIDGES,
-    seaWest: SEA_WEST,
-    seaSouth: SEA_SOUTH,
-    avenuesX: AVE_X,
-    avenuesZ: AVE_Z,
-    playerSpawn: { x: -240, z: -64, heading: Math.PI / 2 },
-    boatDock: { x: -288, z: 32 },
-    bridgePoint: { x: 64, z: 96 },
-  };
-}
-
-/** Titik jalan terdekat (untuk spawn lalu lintas & patroli). */
-export function nearestRoadNode(city, x, z) {
+export function nearestRoadPoint(x, y) {
+  // Proyeksi ke jalan terdekat (dipakai traffic AI dan spawn mobil).
   let best = null;
-  let bestD = Infinity;
-  for (const node of city.roadNodes) {
-    const d = (node.x - x) ** 2 + (node.z - z) ** 2;
-    if (d < bestD) {
-      bestD = d;
-      best = node;
-    }
+  for (const ax of WORLD.avenues) {
+    const d = Math.abs(x - ax);
+    if (!best || d < best.d) best = { d, x: ax, y: clamp(y, 60, WORLD.height - 60), vertical: true };
+  }
+  for (const sy of WORLD.streets) {
+    const d = Math.abs(y - sy);
+    if (!best || d < best.d) best = { d, x: clamp(x, 60, WORLD.width - 60), y: sy, vertical: false };
   }
   return best;
 }
 
-/** Tabrakan lingkaran (x,z,r) dengan AABB penghalang; kembalikan titik yang sudah didorong keluar. */
-export function resolveCircleColliders(city, x, z, r) {
-  let px = x;
-  let pz = z;
-  let hit = false;
-  for (const c of city.colliders) {
-    const cx = Math.max(c.x0, Math.min(px, c.x1));
-    const cz = Math.max(c.z0, Math.min(pz, c.z1));
-    const dx = px - cx;
-    const dz = pz - cz;
-    const d2 = dx * dx + dz * dz;
-    if (d2 < r * r) {
-      hit = true;
-      if (d2 > 0.0001) {
-        const d = Math.sqrt(d2);
-        px = cx + (dx / d) * r;
-        pz = cz + (dz / d) * r;
-      } else {
-        // Tepat di dalam: dorong ke sisi terdekat.
-        const pushLeft = px - c.x0;
-        const pushRight = c.x1 - px;
-        const pushTop = pz - c.z0;
-        const pushBottom = c.z1 - pz;
-        const m = Math.min(pushLeft, pushRight, pushTop, pushBottom);
-        if (m === pushLeft) px = c.x0 - r;
-        else if (m === pushRight) px = c.x1 + r;
-        else if (m === pushTop) pz = c.z0 - r;
-        else pz = c.z1 + r;
+// Titik jalan acak (tengah jalan) untuk spawn lalu lintas.
+export function randomRoadPoint(rng) {
+  if (rng.chance(0.5)) {
+    const ax = rng.pick(WORLD.avenues);
+    return { x: ax + rng.range(-18, 18), y: rng.range(80, WORLD.height - 80), vertical: true };
+  }
+  const sy = rng.pick(WORLD.streets);
+  return { x: rng.range(80, WORLD.width - 80), y: sy + rng.range(-18, 18), vertical: false };
+}
+
+export function buildWorld(rng) {
+  const buildings = [];
+  const props = []; // pohon, lampu, kontainer, kios, patung, dll.
+  const parks = [];
+  const docks = [];
+
+  const blockXs = [0, ...WORLD.avenues, WORLD.width];
+  const blockYs = [0, ...WORLD.streets, WORLD.height];
+
+  // Blok plaza: area terbuka tanpa bangunan di sekitar landmark, toko, dan
+  // titik misi — agar misi selalu bisa dicapai dan pertempuran punya ruang.
+  // (kolom, baris) dalam grid blok: balai (2,2), pasar (2,1), klub (4,4),
+  // vila/rumah (5,1), menara/tono (0,2), gudang (1,4), bengkel (3,2),
+  // klinik (3,1), senjata (2,4).
+  const PLAZAS = new Set(['2,2', '2,1', '4,4', '5,1', '0,2', '1,4', '3,2', '3,1', '2,4']);
+
+  // --- Bangunan per blok kota -------------------------------------------
+  for (let bi = 0; bi < blockXs.length - 1; bi++) {
+    for (let bj = 0; bj < blockYs.length - 1; bj++) {
+      const x0 = blockXs[bi] + WORLD.roadHalfWidth + WORLD.sidewalk + WORLD.blockMargin;
+      const x1 = blockXs[bi + 1] - WORLD.roadHalfWidth - WORLD.sidewalk - WORLD.blockMargin;
+      const y0 = blockYs[bj] + WORLD.roadHalfWidth + WORLD.sidewalk + WORLD.blockMargin;
+      const y1 = blockYs[bj + 1] - WORLD.roadHalfWidth - WORLD.sidewalk - WORLD.blockMargin;
+      if (x1 - x0 < 90 || y1 - y0 < 90) continue;
+      const cx = (x0 + x1) / 2;
+      const cy = (y0 + y1) / 2;
+      const district = districtAt(cx, cy);
+
+      // Plaza: tanpa bangunan, hanya pohon dan bangku.
+      if (PLAZAS.has(bi + ',' + bj)) {
+        for (let t = 0; t < 5; t++) {
+          props.push({ kind: 'tree', x: rng.range(x0 + 20, x1 - 20), y: rng.range(y0 + 20, y1 - 20), s: rng.range(10, 16) });
+        }
+        props.push({ kind: 'bench', x: cx, y: cy, s: 12 });
+        continue;
+      }
+
+      // Taman kota sesekali, bukan bangunan.
+      if (rng.chance(0.12)) {
+        parks.push({ x0, y0, x1, y1, district: district.id });
+        for (let t = 0; t < 7; t++) {
+          props.push({ kind: 'tree', x: rng.range(x0 + 20, x1 - 20), y: rng.range(y0 + 20, y1 - 20), s: rng.range(10, 18) });
+        }
+        props.push({ kind: 'bench', x: cx, y: cy, s: 12 });
+        continue;
+      }
+
+      // Pelabuhan: kontainer dan derek, bukan gedung.
+      if (district.id === 'pelabuhan' && bi === 0) {
+        for (let c = 0; c < 5; c++) {
+          props.push({
+            kind: 'container',
+            x: rng.range(x0 + 30, x1 - 30),
+            y: rng.range(y0 + 24, y1 - 24),
+            w: rng.range(60, 110), h: 26,
+            color: rng.pick(['#b5522f', '#2f7a6a', '#c9a227', '#4a6a8a', '#7a4a8a']),
+            angle: rng.chance(0.5) ? 0 : Math.PI / 2,
+          });
+        }
+        props.push({ kind: 'crane', x: cx, y: y0 + 40, s: 46 });
+        docks.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+        continue;
+      }
+
+      // Pasar: kios-kios kecil berjejer.
+      if (district.id === 'pasar' && rng.chance(0.55)) {
+        for (let k = 0; k < 6; k++) {
+          const kx = x0 + 30 + (k % 3) * ((x1 - x0 - 60) / 2);
+          const ky = y0 + 30 + Math.floor(k / 3) * ((y1 - y0 - 60) / 1.5);
+          props.push({ kind: 'stall', x: kx, y: ky, w: 46, h: 34, color: rng.pick(['#e8e8e8', '#2fa08a', '#d97b2b', '#c95a4a']) });
+        }
+        continue;
+      }
+
+      // Gedung biasa: 1-4 bangunan per blok, ukuran bervariasi.
+      const count = rng.int(1, 3);
+      for (let b = 0; b < count; b++) {
+        const bw = rng.range(70, Math.min(190, (x1 - x0) / count - 24));
+        const bh = rng.range(60, Math.min(170, y1 - y0 - 24));
+        const bx = x0 + 14 + (b * (x1 - x0 - 28)) / count + rng.range(0, 10);
+        const by = y0 + 14 + rng.range(0, Math.max(1, y1 - y0 - bh - 28));
+        const tall = district.id === 'kotatua' || district.id === 'neon';
+        buildings.push({
+          x: bx, y: by, w: bw, h: bh,
+          district: district.id,
+          color: rng.pick(district.roof),
+          wall: shade(district.roof[0]),
+          height: tall ? rng.int(3, 7) : rng.int(1, 3),
+          windows: rng.int(2, 6),
+          type: rng.pick(['house', 'house', 'shop', 'office', 'house', 'warehouse']),
+        });
+      }
+      // Pohon dan lampu di tepi blok.
+      for (let t = 0; t < 3; t++) {
+        props.push({ kind: 'tree', x: rng.range(x0 + 12, x1 - 12), y: rng.range(y0 + 12, y1 - 12), s: rng.range(9, 15) });
       }
     }
   }
-  return { x: px, z: pz, hit };
+
+  // --- Landmark khas tiap distrik ----------------------------------------
+  const landmarks = [
+    { id: 'balai', name: 'Balai Kota Tua', x: 1200, y: 1100, w: 150, h: 100, color: '#8c2f26', district: 'kotatua' },
+    { id: 'klub', name: 'Klub Lampion', x: 2400, y: 2150, w: 170, h: 90, color: '#ff2e88', district: 'neon' },
+    { id: 'vila', name: 'Vila Bukit', x: 2950, y: 575, w: 130, h: 90, color: '#5d3a2a', district: 'bukit' },
+    { id: 'pasar', name: 'Pasar Ikan Lama', x: 1200, y: 500, w: 190, h: 110, color: '#a8442f', district: 'pasar' },
+    { id: 'menara', name: 'Menara Suar', x: 180, y: 1250, w: 60, h: 60, color: '#e8e8e8', district: 'pelabuhan' },
+  ];
+  for (const lm of landmarks) {
+    buildings.push({ x: lm.x - lm.w / 2, y: lm.y - lm.h / 2, w: lm.w, h: lm.h, district: lm.district, color: lm.color, wall: shade(lm.color), height: 4, windows: 6, type: 'landmark', name: lm.name });
+  }
+
+  // Lampu jalan di setiap persimpangan.
+  for (const ax of WORLD.avenues) {
+    for (const sy of WORLD.streets) {
+      props.push({ kind: 'lamp', x: ax + WORLD.roadHalfWidth + 8, y: sy - WORLD.roadHalfWidth - 8, s: 8 });
+      props.push({ kind: 'lamp', x: ax - WORLD.roadHalfWidth - 8, y: sy + WORLD.roadHalfWidth + 8, s: 8 });
+    }
+  }
+  // Pohon palem di sepanjang dermaga neon.
+  for (let x = 200; x < WORLD.width - 100; x += 160) {
+    props.push({ kind: 'palm', x, y: 2400 + ((x / 160) % 2) * 40, s: 16 });
+  }
+
+  return { buildings, props, parks, docks, landmarks };
 }
 
-/** Apakah segmen (x1,z1)-(x2,z2) memotong sungai di luar jembatan (untuk AI). */
-export function crossesRiverOffBridge(x1, z1, x2, z2) {
-  if ((x1 < RIVER.x0 && x2 > RIVER.x1) || (x1 > RIVER.x1 && x2 < RIVER.x0)) {
-    for (const bz of BRIDGES) {
-      if (Math.min(z1, z2) <= bz && bz <= Math.max(z1, z2)) return false;
+function shade(hex) {
+  // Warna dinding: versi lebih terang dari warna atap.
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, ((n >> 16) & 255) + 42);
+  const g = Math.min(255, ((n >> 8) & 255) + 38);
+  const b = Math.min(255, (n & 255) + 34);
+  return `rgb(${r},${g},${b})`;
+}
+
+// --- Tabrakan ------------------------------------------------------------
+// Lingkaran (pemain/pejalan kaki) vs kotak bangunan. Kembalikan posisi yang
+// sudah digeser keluar dari bangunan, atau null bila tidak bertabrakan.
+export function collideCircleBuildings(x, y, r, buildings) {
+  let nx = x;
+  let ny = y;
+  let hit = false;
+  for (const b of buildings) {
+    const cx = clamp(nx, b.x, b.x + b.w);
+    const cy = clamp(ny, b.y, b.y + b.h);
+    const dx = nx - cx;
+    const dy = ny - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < r * r) {
+      hit = true;
+      if (d2 > 0.01) {
+        const d = Math.sqrt(d2);
+        nx = cx + (dx / d) * r;
+        ny = cy + (dy / d) * r;
+      } else {
+        // Tepat di dalam: dorong ke sisi terdekat.
+        const left = nx - b.x;
+        const right = b.x + b.w - nx;
+        const top = ny - b.y;
+        const bottom = b.y + b.h - ny;
+        const m = Math.min(left, right, top, bottom);
+        if (m === left) nx = b.x - r;
+        else if (m === right) nx = b.x + b.w + r;
+        else if (m === top) ny = b.y - r;
+        else ny = b.y + b.h + r;
+      }
     }
-    return true;
+  }
+  return hit ? { x: nx, y: ny } : null;
+}
+
+export function pointInBuilding(x, y, buildings) {
+  for (const b of buildings) {
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b;
+  }
+  return null;
+}
+
+// Kotak mobil (oriented) vs bangunan — pendekatan dengan 4 titik sudut.
+export function carHitsBuilding(car, buildings) {
+  const hw = car.size[0] / 2;
+  const hh = car.size[1] / 2;
+  const cos = Math.cos(car.angle);
+  const sin = Math.sin(car.angle);
+  const corners = [
+    [hw, hh], [hw, -hh], [-hw, hh], [-hw, -hh],
+  ];
+  for (const [lx, ly] of corners) {
+    const wx = car.x + lx * cos - ly * sin;
+    const wy = car.y + lx * sin + ly * cos;
+    if (pointInBuilding(wx, wy, buildings)) return true;
   }
   return false;
+}
+
+export function clampToWorld(x, y, margin = 40) {
+  return {
+    x: clamp(x, margin, WORLD.width - margin),
+    y: clamp(y, margin, WORLD.height - margin),
+  };
+}
+
+// Toko terdekat dari titik tertentu.
+export function nearestShop(x, y) {
+  let best = null;
+  let bd = Infinity;
+  for (const s of SHOPS) {
+    const d = dist(x, y, s.x, s.y);
+    if (d < bd) { bd = d; best = s; }
+  }
+  return { shop: best, d: bd };
 }

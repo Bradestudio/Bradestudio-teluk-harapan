@@ -1,232 +1,163 @@
 // TELUK HARAPAN — economy.js
-// Uang, inventaris senjata, dan toko: Bengkel (perbaiki), Toko Senjata (beli
-// senjata & amunisi & rompi), Klinik (obat), Rumah Aman (simpan & tidur).
-// Semua transaksi mengubah state pemain dan mengembalikan pesan hasil.
-// Ditulis fresh untuk round 4.
+// Empat toko yang semuanya berfungsi: Bengkel Jaya (perbaiki & upgrade mobil),
+// Sinar Senjata (senjata & amunisi), Rumah Aman (simpan & istirahat),
+// Klinik Sehat (obat & P3K). Transaksi lewat shopOpen di G.
 
-import { CONFIG } from './config.js';
+import { WEAPONS, SHOPS } from './config.js';
+import { spendCash, addCash, healPlayer } from './player.js';
 
-export class Economy {
-  constructor() {
-    this.money = CONFIG.player.startMoney;
-    this.weapons = {
-      fists: { owned: true, ammo: Infinity },
-    };
-    this.currentWeapon = 'fists';
-    this.armor = 0;
-    this.health = CONFIG.player.health;
-    this._log = [];
+export function shopById(id) {
+  return SHOPS.find((s) => s.id === id);
+}
+
+// Beli satu item toko. Kembalikan { ok, message }.
+export function buyItem(G, shop, itemId) {
+  const p = G.player;
+  const item = shop.stock.find((i) => i.id === itemId);
+  if (!item) return { ok: false, message: 'Barang tidak dikenal.' };
+  if (item.price > 0 && p.cash < item.price) {
+    G.audio.sfx.denied();
+    return { ok: false, message: 'Uang tidak cukup. Perlu Rp ' + item.price + ', kamu punya Rp ' + p.cash + '.' };
   }
 
-  log(message) {
-    this._log.push(message);
-    if (this._log.length > 6) this._log.shift();
-  }
-
-  recentLog() {
-    return this._log.slice();
-  }
-
-  earn(amount, reason) {
-    this.money += amount;
-    this.log(`+$${amount} — ${reason}`);
-    return this.money;
-  }
-
-  spend(amount, reason) {
-    if (this.money < amount) return false;
-    this.money -= amount;
-    this.log(`-$${amount} — ${reason}`);
-    return true;
-  }
-
-  giveWeapon(id) {
-    const spec = CONFIG.weapons[id];
-    if (!spec) return false;
-    if (!this.weapons[id]) {
-      this.weapons[id] = { owned: true, ammo: spec.ammo };
-    } else {
-      this.weapons[id].ammo += spec.ammo;
+  switch (itemId) {
+    case 'repair': {
+      const car = p.inCar;
+      if (!car) return { ok: false, message: 'Bawa mobilmu ke sini dulu — kamu sedang jalan kaki.' };
+      if (car.hp >= car.maxHp) return { ok: false, message: 'Mobilmu sudah dalam kondisi sempurna.' };
+      spendCash(G, item.price);
+      car.hp = car.maxHp;
+      car.crashed = false;
+      G.audio.sfx.save();
+      return { ok: true, message: 'Mobil diperbaiki penuh. Siap ngebut lagi!' };
     }
-    this.log(`${spec.name} didapat.`);
-    return true;
-  }
-
-  hasWeapon(id) {
-    return !!(this.weapons[id] && this.weapons[id].owned);
-  }
-
-  ammoFor(id) {
-    const w = this.weapons[id];
-    return w ? w.ammo : 0;
-  }
-
-  currentSpec() {
-    return CONFIG.weapons[this.currentWeapon];
-  }
-
-  switchWeapon() {
-    const owned = Object.keys(this.weapons).filter((id) => this.weapons[id].owned);
-    if (owned.length <= 1) return this.currentWeapon;
-    const idx = owned.indexOf(this.currentWeapon);
-    this.currentWeapon = owned[(idx + 1) % owned.length];
-    this.log(`Senjata: ${CONFIG.weapons[this.currentWeapon].name}`);
-    return this.currentWeapon;
-  }
-
-  useAmmo() {
-    const w = this.weapons[this.currentWeapon];
-    if (!w) return false;
-    if (w.ammo === Infinity) return true;
-    if (w.ammo <= 0) return false;
-    w.ammo -= 1;
-    return true;
-  }
-
-  needReload() {
-    const w = this.weapons[this.currentWeapon];
-    return w && w.ammo !== Infinity && w.ammo <= 0;
-  }
-
-  buyAmmo() {
-    const id = this.currentWeapon;
-    if (id === 'fists') return { ok: false, msg: 'Tangan kosong tidak butuh amunisi.' };
-    if (!this.weapons[id]) return { ok: false, msg: 'Senjata itu belum dimiliki.' };
-    const spec = CONFIG.weapons[id];
-    const price = spec.ammoPrice;
-    if (this.money < price) return { ok: false, msg: 'Uang tidak cukup.' };
-    this.money -= price;
-    this.weapons[id].ammo += spec.ammo;
-    return { ok: true, msg: `Amunisi ${spec.name} +${spec.ammo} (-$${price}).` };
-  }
-
-  /** Daftar barang toko berdasarkan jenisnya; tiap item {id, name, price, can, buy}. */
-  shopItems(kind) {
-    const items = [];
-    if (kind === 'repair') {
-      items.push(
-        { id: 'repair', name: 'Perbaiki mobil', price: CONFIG.prices.repair, desc: 'Mobil kembali 100%' },
-        { id: 'armorCar', name: 'Lapis baja mobil', price: 120, desc: 'Mobil tahan 2x tabrakan' },
-      );
-    } else if (kind === 'weapons') {
-      if (!this.hasWeapon('pistol')) {
-        items.push({ id: 'buyPistol', name: 'Pistol', price: CONFIG.weapons.pistol.price, desc: 'Damage 22, 12 peluru' });
-      }
-      if (!this.hasWeapon('smg')) {
-        items.push({ id: 'buySmg', name: 'SMG', price: CONFIG.weapons.smg.price, desc: 'Damage 14, otomatis, 32 peluru' });
-      }
-      items.push(
-        { id: 'ammo', name: 'Amunisi senjata aktif', price: CONFIG.weapons[this.currentWeapon].ammoPrice || 20, desc: 'Isi ulang magasin' },
-        { id: 'vest', name: 'Rompi antipeluru', price: CONFIG.prices.armorPlate, desc: '+50 armor' },
-      );
-    } else if (kind === 'clinic') {
-      items.push(
-        { id: 'heal', name: 'Obat luka', price: CONFIG.prices.heal, desc: '+50 darah' },
-        { id: 'fullHeal', name: 'Rawat penuh', price: CONFIG.prices.fullHeal, desc: 'Darah penuh' },
-      );
-    } else if (kind === 'safehouse') {
-      items.push(
-        { id: 'save', name: 'Simpan game', price: 0, desc: 'Simpan progres ke browser' },
-        { id: 'sleep', name: 'Tidur sampai pagi', price: 0, desc: 'Lanjut ke hari berikutnya' },
-      );
+    case 'armor_car': {
+      const car = p.inCar;
+      if (!car) return { ok: false, message: 'Bawa mobilmu ke sini dulu.' };
+      if (car.maxHp > car.model.hp + 40) return { ok: false, message: 'Mobil ini sudah berpelindung baja.' };
+      spendCash(G, item.price);
+      car.maxHp += 80;
+      car.hp += 80;
+      G.audio.sfx.save();
+      return { ok: true, message: 'Pelindung baja terpasang. Mobil +80 HP.' };
     }
-    return items;
+    case 'paint': {
+      const car = p.inCar;
+      if (!car) return { ok: false, message: 'Bawa mobilmu ke sini dulu.' };
+      spendCash(G, item.price);
+      const colors = ['#c93a3a', '#4a7fb5', '#7fb069', '#e8c832', '#8a6a9a', '#2fa08a', '#3a3a3a'];
+      car.color = colors[Math.floor(Math.random() * colors.length)];
+      p.wantedHeat = Math.max(0, p.wantedHeat - 15);
+      G.audio.sfx.save();
+      return { ok: true, message: 'Cat baru! Polisi lebih lambat mengenalimu (wanted -15).' };
+    }
+    case 'nitro': {
+      const car = p.inCar;
+      if (!car) return { ok: false, message: 'Bawa mobilmu ke sini dulu.' };
+      if (car.nitro) return { ok: false, message: 'Mobil ini sudah punya nitro.' };
+      spendCash(G, item.price);
+      car.nitro = true;
+      car.nitroFuel = 100;
+      G.audio.sfx.save();
+      return { ok: true, message: 'Nitro terpasang! Tahan Shift saat mengemudi.' };
+    }
+    case 'buy_pistol':
+    case 'buy_smg':
+    case 'buy_shotgun': {
+      const wid = itemId.replace('buy_', '');
+      if (p.owned[wid]) return { ok: false, message: 'Kamu sudah punya ' + WEAPONS[wid].name + '.' };
+      spendCash(G, item.price);
+      p.owned[wid] = true;
+      p.reserve[wid] += WEAPONS[wid].mag;
+      p.weapon = wid;
+      G.audio.sfx.save();
+      return { ok: true, message: WEAPONS[wid].name + ' dibeli! Tekan 2/3/4 untuk memakainya.' };
+    }
+    case 'ammo_pistol':
+    case 'ammo_smg':
+    case 'ammo_shotgun': {
+      const wid = itemId.replace('ammo_', '');
+      if (!p.owned[wid]) return { ok: false, message: 'Beli dulu senjatanya (' + WEAPONS[wid].name + ').' };
+      spendCash(G, item.price);
+      const qty = wid === 'pistol' ? 24 : wid === 'smg' ? 60 : 12;
+      p.reserve[wid] += qty;
+      G.audio.sfx.pickup();
+      return { ok: true, message: '+' + qty + ' peluru ' + WEAPONS[wid].name + '.' };
+    }
+    case 'vest': {
+      if (p.armor >= p.maxArmor) return { ok: false, message: 'Rompi sudah penuh.' };
+      spendCash(G, item.price);
+      p.armor = Math.min(p.maxArmor, p.armor + 50);
+      G.audio.sfx.save();
+      return { ok: true, message: 'Rompi dipakai. Armor +50.' };
+    }
+    case 'save': {
+      const ok = G.saveGame(1);
+      return ok
+        ? { ok: true, message: 'Permainan disimpan ke slot 1.' }
+        : { ok: false, message: 'Gagal menyimpan (penyimpanan browser tidak tersedia).' };
+    }
+    case 'rest': {
+      spendCash(G, item.price);
+      p.hp = p.maxHp;
+      p.wantedHeat = Math.max(0, p.wantedHeat - 20);
+      p.wanted = p.wantedHeat <= 0 ? 0 : p.wanted;
+      G.audio.sfx.heal();
+      return { ok: true, message: 'Kau beristirahat. HP penuh, wanted berkurang.' };
+    }
+    case 'stash': {
+      if (G.stashTakenToday) return { ok: false, message: 'Simpanan hari ini sudah diambil. Kembali besok.' };
+      G.stashTakenToday = true;
+      addCash(G, 200, 'Uang simpanan');
+      return { ok: true, message: 'Rp 200 diambil dari simpanan.' };
+    }
+    case 'heal': {
+      if (p.hp >= p.maxHp) return { ok: false, message: 'HP-mu sudah penuh.' };
+      spendCash(G, item.price);
+      healPlayer(G, p.maxHp - p.hp);
+      return { ok: true, message: 'Perawatan selesai. HP penuh.' };
+    }
+    case 'bandage': {
+      if (p.hp >= p.maxHp) return { ok: false, message: 'HP-mu sudah penuh.' };
+      spendCash(G, item.price);
+      healPlayer(G, 40);
+      return { ok: true, message: 'Perban dipasang. HP +40.' };
+    }
+    case 'medkit': {
+      if (p.medkits >= 5) return { ok: false, message: 'Kantongmu sudah penuh (maks 5 kotak P3K).' };
+      spendCash(G, item.price);
+      p.medkits++;
+      G.audio.sfx.pickup();
+      return { ok: true, message: 'Kotak P3K masuk kantong. Tekan H untuk memakai.' };
+    }
+    default:
+      return { ok: false, message: 'Barang belum tersedia.' };
   }
+}
 
-  /** Beli item toko; kembalikan {ok, msg}. `hooks` menyediakan aksi dunia. */
-  buy(itemId, hooks) {
-    switch (itemId) {
-      case 'repair': {
-        if (this.money < CONFIG.prices.repair) return { ok: false, msg: 'Uang tidak cukup.' };
-        this.money -= CONFIG.prices.repair;
-        if (hooks && hooks.repairCar) hooks.repairCar();
-        return { ok: true, msg: 'Mobil diperbaiki.' };
+// Uang receh di jalan: koin yang bisa diambil.
+export function spawnCashPickup(G, x, y, amount) {
+  G.pickups.push({ kind: 'cash', x, y, amount, label: 'Rp ' + amount });
+}
+
+export function updatePickups(G, dt) {
+  const p = G.player;
+  for (const pk of G.pickups) {
+    pk.bob = (pk.bob || 0) + dt * 3;
+    const d = Math.hypot(p.x - pk.x, p.y - pk.y);
+    if (d < 36) {
+      pk.taken = true;
+      if (pk.kind === 'cash') {
+        addCash(G, pk.amount, 'Uang ditemukan');
+        // Beri tahu misi (dipakai stage ambil uang).
+        if (G.missionEvent) G.missionEvent('pickupCash', pk);
+      } else if (pk.kind === 'health') {
+        healPlayer(G, 30);
+      } else if (pk.kind === 'ammo') {
+        p.reserve.pistol = (p.reserve.pistol || 0) + 12;
+        G.addToast('+12 amunisi pistol.');
       }
-      case 'armorCar': {
-        if (this.money < 120) return { ok: false, msg: 'Uang tidak cukup.' };
-        this.money -= 120;
-        if (hooks && hooks.armorCar) hooks.armorCar();
-        return { ok: true, msg: 'Mobil dilapis baja.' };
-      }
-      case 'buyPistol': {
-        if (this.hasWeapon('pistol')) return { ok: false, msg: 'Sudah punya pistol.' };
-        if (this.money < CONFIG.weapons.pistol.price) return { ok: false, msg: 'Uang tidak cukup.' };
-        this.money -= CONFIG.weapons.pistol.price;
-        this.giveWeapon('pistol');
-        return { ok: true, msg: 'Pistol dibeli.' };
-      }
-      case 'buySmg': {
-        if (this.hasWeapon('smg')) return { ok: false, msg: 'Sudah punya SMG.' };
-        if (this.money < CONFIG.weapons.smg.price) return { ok: false, msg: 'Uang tidak cukup.' };
-        this.money -= CONFIG.weapons.smg.price;
-        this.giveWeapon('smg');
-        return { ok: true, msg: 'SMG dibeli.' };
-      }
-      case 'ammo': {
-        return this.buyAmmo();
-      }
-      case 'vest': {
-        if (this.money < CONFIG.prices.armorPlate) return { ok: false, msg: 'Uang tidak cukup.' };
-        this.money -= CONFIG.prices.armorPlate;
-        this.armor = Math.min(100, this.armor + 50);
-        return { ok: true, msg: 'Rompi dipakai. Armor +50.' };
-      }
-      case 'heal': {
-        if (this.money < CONFIG.prices.heal) return { ok: false, msg: 'Uang tidak cukup.' };
-        this.money -= CONFIG.prices.heal;
-        this.health = Math.min(CONFIG.player.health, this.health + 50);
-        return { ok: true, msg: 'Luka diobati. +50 darah.' };
-      }
-      case 'fullHeal': {
-        if (this.money < CONFIG.prices.fullHeal) return { ok: false, msg: 'Uang tidak cukup.' };
-        this.money -= CONFIG.prices.fullHeal;
-        this.health = CONFIG.player.health;
-        return { ok: true, msg: 'Darah penuh.' };
-      }
-      case 'save': {
-        if (hooks && hooks.saveGame) hooks.saveGame();
-        return { ok: true, msg: 'Game disimpan.' };
-      }
-      case 'sleep': {
-        if (hooks && hooks.sleep) hooks.sleep();
-        return { ok: true, msg: 'Tidur... hari baru dimulai.' };
-      }
-      default:
-        return { ok: false, msg: 'Barang tidak dikenal.' };
     }
   }
-
-  /** Kerusakan masuk: armor menyerap dulu, baru darah. */
-  damage(amount) {
-    let rest = amount;
-    if (this.armor > 0) {
-      const absorbed = Math.min(this.armor, rest);
-      this.armor -= absorbed;
-      rest -= absorbed;
-    }
-    this.health -= rest;
-    return this.health;
-  }
-
-  get alive() {
-    return this.health > 0;
-  }
-
-  snapshot() {
-    return {
-      money: this.money,
-      weapons: this.weapons,
-      currentWeapon: this.currentWeapon,
-      armor: this.armor,
-      health: this.health,
-    };
-  }
-
-  restore(snap) {
-    this.money = snap.money ?? CONFIG.player.startMoney;
-    this.weapons = snap.weapons ?? { fists: { owned: true, ammo: Infinity } };
-    this.currentWeapon = snap.currentWeapon || 'fists';
-    this.armor = snap.armor ?? 0;
-    this.health = snap.health ?? CONFIG.player.health;
-  }
+  G.pickups = G.pickups.filter((pk) => !pk.taken);
 }

@@ -1,82 +1,66 @@
 // TELUK HARAPAN — random.js
-// RNG ber-seed (mulberry32) + helper acak. Seed yang sama -> kota, lalu lintas,
-// dan penempatan yang sama persis: itulah yang membuat screenshot deterministik
-// dan playthrough bisa diulang. Ditulis fresh untuk round 4.
+// RNG deterministik (mulberry32) agar dunia, lalu lintas, dan screenshot
+// bisa diulang dari seed yang sama. Screenshot memakai seed tetap.
 
-export class SeededRandom {
-  constructor(seed) {
-    // Campur seed supaya seed kecil (mis. 1) tetap memberi urutan yang bagus.
-    this.state = (seed ^ 0x9e3779b9) >>> 0;
-    if (this.state === 0) this.state = 0x6d2b79f5;
-  }
-
-  /** Bilangan [0, 1). */
-  next() {
-    this.state = (this.state + 0x6d2b79f5) | 0;
-    let t = Math.imul(this.state ^ (this.state >>> 15), 1 | this.state);
+export function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function next() {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  }
-
-  /** Bilangan bulat [min, max] (inklusif). */
-  int(min, max) {
-    return min + Math.floor(this.next() * (max - min + 1));
-  }
-
-  /** Bilangan riil [min, max). */
-  range(min, max) {
-    return min + this.next() * (max - min);
-  }
-
-  /** true dengan peluang p (0..1). */
-  chance(p) {
-    return this.next() < p;
-  }
-
-  /** Satu elemen acak dari array. */
-  pick(list) {
-    return list[Math.floor(this.next() * list.length)];
-  }
-
-  /** Salinan array yang diacak urutannya (Fisher-Yates). */
-  shuffled(list) {
-    const out = list.slice();
-    for (let i = out.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(this.next() * (i + 1));
-      const tmp = out[i];
-      out[i] = out[j];
-      out[j] = tmp;
-    }
-    return out;
-  }
-
-  /** Nilai dari distribusi normal kasar (rata-rata 0, simpangan ~1). */
-  gaussian() {
-    return (this.next() + this.next() + this.next() - 1.5) * 1.6;
-  }
-
-  /** Warna hex acak dari palet. */
-  color(palette) {
-    return this.pick(palette);
-  }
-
-  /** Sudut acak 0..2π. */
-  angle() {
-    return this.next() * Math.PI * 2;
-  }
+  };
 }
 
-/** RNG cepat sekali pakai untuk hal non-kritis (partikel, dsb). */
+// RNG global permainan; di-seed ulang tiap permainan baru / screenshot.
 export function makeRng(seed) {
-  return new SeededRandom(seed);
+  const next = mulberry32(seed);
+  return {
+    next,
+    range(min, max) { return min + next() * (max - min); },
+    int(min, max) { return Math.floor(min + next() * (max - min + 1)); },
+    pick(arr) { return arr[Math.floor(next() * arr.length)]; },
+    chance(p) { return next() < p; },
+    // Gaussian kasar untuk penyebaran alami (posisi pejalan kaki, dll).
+    gauss() { return (next() + next() + next() - 1.5) / 1.5; },
+  };
 }
 
-/** Hash string pendek jadi seed angka (untuk nama distrik dsb). */
-export function hashSeed(text) {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i += 1) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
+export function clamp(v, min, max) {
+  return v < min ? min : v > max ? max : v;
+}
+
+export function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+export function dist(x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+export function angleTo(x1, y1, x2, y2) {
+  return Math.atan2(y2 - y1, x2 - x1);
+}
+
+// Selisih sudut terpendek, dalam (-PI, PI].
+export function angleDiff(a, b) {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+// Jarak titik ke segmen garis — dipakai untuk tabrakan dengan dinding jalan.
+export function distToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 === 0 ? 0 : ((px - x1) * dx + (py - y1) * dy) / len2;
+  t = clamp(t, 0, 1);
+  const cx = x1 + t * dx;
+  const cy = y1 + t * dy;
+  return { d: dist(px, py, cx, cy), cx, cy };
 }

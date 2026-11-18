@@ -1,69 +1,130 @@
 // TELUK HARAPAN — save.js
-// Simpan & muat progres (localStorage): uang, senjata, hari, misi, posisi,
-// dan statistik. Versi save dicantumkan supaya save lama yang tidak cocok
-// ditolak dengan bersih. Ditulis fresh untuk round 4.
+// Simpan / muat progres ke localStorage (3 slot). Menyimpan posisi, uang,
+// senjata, misi yang selesai, hari, dan statistik — bukan seluruh dunia
+// (dunia dibangun ulang dari seed saat muat).
 
-import { CONFIG } from './config.js';
+import { createPlayer } from './player.js';
 
-const SAVE_VERSION = 4;
+const KEY = 'teluk-harapan-save-';
 
-export function saveGame(state) {
-  const payload = {
-    version: SAVE_VERSION,
-    savedAt: new Date().toISOString(),
-    day: state.day,
-    missionIndex: state.missionIndex,
-    missionsDone: state.missionsDone,
-    money: state.economy.money,
-    weapons: state.economy.weapons,
-    currentWeapon: state.economy.currentWeapon,
-    armor: state.economy.armor,
-    health: state.economy.health,
-    player: { x: state.player.x, z: state.player.z, heading: state.player.heading },
-    totalEarned: state.totalEarned,
-    carsStolen: state.carsStolen,
-    playSeconds: state.playSeconds,
-  };
+export function saveSlotExists(slot) {
   try {
-    window.localStorage.setItem(CONFIG.saveKey, JSON.stringify(payload));
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
+    return !!localStorage.getItem(KEY + slot);
+  } catch (e) {
+    return false;
   }
 }
 
-export function loadGame() {
-  let raw = null;
-  try {
-    raw = window.localStorage.getItem(CONFIG.saveKey);
-  } catch {
-    return { ok: false, error: 'storage-unavailable' };
+export function listSaves() {
+  const out = [];
+  for (let s = 1; s <= 3; s++) {
+    try {
+      const raw = localStorage.getItem(KEY + s);
+      out.push(raw ? JSON.parse(raw) : null);
+    } catch (e) {
+      out.push(null);
+    }
   }
-  if (!raw) return { ok: false, error: 'no-save' };
+  return out;
+}
+
+export function buildSaveData(G) {
+  const p = G.player;
+  return {
+    version: 5,
+    savedAt: new Date().toISOString(),
+    day: p.day,
+    x: Math.round(p.x),
+    y: Math.round(p.y),
+    hp: Math.round(p.hp),
+    armor: Math.round(p.armor),
+    cash: p.cash,
+    weapon: p.weapon,
+    owned: p.owned,
+    ammo: p.ammo,
+    mag: p.mag,
+    reserve: p.reserve,
+    medkits: p.medkits,
+    missionsDone: p.missionsDone,
+    completedMissions: G.mission.completed.slice(),
+    kills: p.kills,
+    carsStolen: p.carsStolen,
+    playTime: Math.round(p.playTime),
+    seed: G.seed,
+  };
+}
+
+export function saveGame(G, slot) {
+  try {
+    const data = buildSaveData(G);
+    localStorage.setItem(KEY + slot, JSON.stringify(data));
+    G.audio.sfx.save();
+    G.addToast('Permainan disimpan (slot ' + slot + ').');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+export function loadGame(G, slot) {
   let data = null;
   try {
+    const raw = localStorage.getItem(KEY + slot);
+    if (!raw) return null;
     data = JSON.parse(raw);
-  } catch {
-    return { ok: false, error: 'corrupt' };
+  } catch (e) {
+    return null;
   }
-  if (!data || data.version !== SAVE_VERSION) {
-    return { ok: false, error: 'version-mismatch' };
-  }
-  return { ok: true, data };
+  if (!data || data.version !== 5) return null;
+  const p = G.player;
+  p.day = data.day || 1;
+  p.x = data.x;
+  p.y = data.y;
+  p.hp = data.hp;
+  p.armor = data.armor;
+  p.cash = data.cash;
+  p.weapon = data.weapon || 'fist';
+  p.owned = { fist: true, ...(data.owned || {}) };
+  p.ammo = data.ammo || p.ammo;
+  p.mag = data.mag || p.mag;
+  p.reserve = data.reserve || p.reserve;
+  p.medkits = data.medkits || 0;
+  p.missionsDone = data.missionsDone || 0;
+  p.kills = data.kills || 0;
+  p.carsStolen = data.carsStolen || 0;
+  p.playTime = data.playTime || 0;
+  p.wanted = 0;
+  p.wantedHeat = 0;
+  G.mission.completed = (data.completedMissions || []).slice();
+  G.setDay(p.day);
+  G.addToast('Save dimuat — Hari ' + p.day + ', ' + (data.completedMissions || []).length + ' misi selesai.');
+  return data;
 }
 
-export function clearSave() {
+export function deleteSave(slot) {
   try {
-    window.localStorage.removeItem(CONFIG.saveKey);
-  } catch {
-    // Abaikan: penyimpanan memang tidak tersedia.
-  }
-}
-
-export function hasSave() {
-  try {
-    return window.localStorage.getItem(CONFIG.saveKey) !== null;
-  } catch {
+    localStorage.removeItem(KEY + slot);
+    return true;
+  } catch (e) {
     return false;
+  }
+}
+
+// Ringkasan save untuk layar judul.
+export function saveSummary(slot) {
+  try {
+    const raw = localStorage.getItem(KEY + slot);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    const date = new Date(d.savedAt);
+    return {
+      slot,
+      day: d.day,
+      missions: (d.completedMissions || []).length,
+      cash: d.cash,
+      when: date.toLocaleDateString('id-ID') + ' ' + date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+    };
+  } catch (e) {
+    return null;
   }
 }

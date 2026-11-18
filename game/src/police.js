@@ -1,244 +1,208 @@
 // TELUK HARAPAN — police.js
-// Sistem wanted 0-5 bintang + AI polisi: mobil patroli mengejar & menabrak,
-// polisi jalan kaki menangkap, blokade di bintang 3+, helikopter dengan sorot
-// di bintang 3+. Panas mereda bila lama tidak terlihat. Ditulis fresh.
+// Sistem wanted 1-5: mobil patroli mengejar, polisi jalan kaki menangkap,
+// helikopter di wanted 3+, blokade jalan di wanted 4+. Wanted turun saat
+// pemain bersembunyi (jauh dari polisi, di gang, atau di rumah aman).
 
-import { CONFIG } from './config.js';
-import { SeededRandom } from './random.js';
-import { nearestRoadNode, resolveCircleColliders } from './world.js';
+import { WORLD } from './config.js';
+import { dist, angleTo, clamp, angleDiff } from './random.js';
+import { makeCar, updatePoliceCar } from './vehicles.js';
+import { makeEnemy } from './combat.js';
+import { damagePlayer, lowerWanted } from './player.js';
+import { randomRoadPoint, nearestRoadPoint } from './world.js';
 
-export class Police {
-  constructor(city, renderer, rngSeed) {
-    this.city = city;
-    this.renderer = renderer;
-    this.rng = new SeededRandom(rngSeed);
-    this.stars = 0;
-    this.heat = 0; // 0..1 — seberapa "panas" posisi pemain diketahui
-    this.lastCrimeAt = -999;
-    this.time = 0;
-    this.cars = [];
-    this.officers = [];
-    this.heli = null;
-    this.heliMesh = null;
-    this.roadblock = []; // mobil blokade {x,z,heading,mesh}
-    this.busted = false;
-    this._onBusted = null;
-    this._onStarsChanged = null;
+export function updatePolice(G, dt) {
+  const p = G.player;
+  const wanted = p.wanted;
+
+  // --- Spawn mobil patroli sesuai wanted ----------------------------------
+  const wantCars = wanted === 0 ? 0 : wanted === 1 ? 1 : wanted === 2 ? 2 : wanted === 3 ? 3 : wanted === 4 ? 4 : 5;
+  let policeCars = G.cars.filter((c) => c.isPolice && c.driver === 'police');
+  if (policeCars.length < wantCars && G.policeTimer <= 0) {
+    const car = spawnPoliceCar(G);
+    if (car) G.cars.push(car);
+    G.policeTimer = 2.5;
+  }
+  G.policeTimer = Math.max(0, (G.policeTimer || 0) - dt);
+
+  // Mobil patroli yang tidak lagi dibutuhkan pergi (wanted turun).
+  for (const car of policeCars) {
+    if (wanted === 0) {
+      car.ai.kind = 'traffic';
+      car.ai.cruise = 140;
+      car.driver = 'traffic';
+      car.isPolice = false;
+    }
   }
 
-  onBusted(cb) { this._onBusted = cb; }
-  onStarsChanged(cb) { this._onStarsChanged = cb; }
+  // --- Polisi jalan kaki (tidak spawn di tengah misi aktif) ----------------
+  const wantFoot = (!G.mission.active && wanted >= 2) ? Math.min(4, wanted) : 0;
+  let footCops = G.enemies.filter((e) => e.isCop && !e.dead);
+  if (footCops.length < wantFoot && G.copTimer <= 0 && !p.inCar) {
+    const cop = makeEnemy(G, p.x + (Math.random() - 0.5) * 500, p.y + (Math.random() - 0.5) * 500, {
+      name: 'Polisi Teluk', hp: 50, speed: 120, weapon: 'pistol', damage: 4, range: 320, isCop: true, dropsCash: 0,
+    });
+    cop.state = 'chase';
+    G.enemies.push(cop);
+    G.copTimer = 4;
+  }
+  G.copTimer = Math.max(0, (G.copTimer || 0) - dt);
 
-  addStars(n, now) {
-    const before = this.stars;
-    this.stars = Math.max(0, Math.min(CONFIG.wanted.maxStars, this.stars + n));
-    this.heat = 1;
-    this.lastCrimeAt = now;
-    if (this.stars !== before && this._onStarsChanged) this._onStarsChanged(this.stars);
-    this._syncUnits();
+  // Polisi jalan kaki yang dekat menangkap pemain (bukan menembak dari jauh).
+  if (!p.inCar) {
+    for (const cop of footCops) {
+      if (dist(cop.x, cop.y, p.x, p.y) < 26 && p.hp > 0) {
+        // Ditangkap: wanted lunas dengan denda, HP tersisa sedikit.
+        arrestPlayer(G);
+        break;
+      }
+    }
   }
 
-  setStars(n, now) {
-    const before = this.stars;
-    this.stars = Math.max(0, Math.min(CONFIG.wanted.maxStars, n));
-    this.heat = this.stars > 0 ? 1 : 0;
-    this.lastCrimeAt = now;
-    if (this.stars !== before && this._onStarsChanged) this._onStarsChanged(this.stars);
-    this._syncUnits();
+  // --- Helikopter (wanted 3+) ----------------------------------------------
+  if (wanted >= 3 && !G.heli) {
+    G.heli = {
+      x: p.x + 300, y: p.y - 300, angle: 0,
+      rotor: 0, spotlight: true, shootTimer: 2,
+      searchTimer: 0,
+    };
+    G.addToast('Helikopter polisi di atasmu! Cari tempat tertutup!');
+    G.audio.sfx.radio();
   }
-
-  clearWanted() {
-    this.setStars(0, this.time);
+  if (wanted < 3 && G.heli) {
+    G.heli = null;
   }
-
-  _syncUnits() {
-    const wantCars = this.stars * CONFIG.wanted.policePerStar;
-    // Tambah mobil polisi bila kurang.
-    while (this.cars.length < wantCars) {
-      const mesh = this.renderer.makeCarMesh('polisi');
-      this.renderer.scene.add(mesh);
-      this.cars.push({
-        x: 0, z: 0, heading: 0, speed: 0, node: 0, target: null,
-        mesh, siren: Math.random() * 10, ramCooldown: 0,
+  if (G.heli) {
+    const h = G.heli;
+    h.rotor += dt * 22;
+    const a = angleTo(h.x, h.y, p.x, p.y);
+    h.angle = a;
+    const d = dist(h.x, h.y, p.x, p.y);
+    const speed = d > 260 ? 220 : 120;
+    h.x += Math.cos(a) * speed * dt;
+    h.y += Math.sin(a) * speed * dt;
+    // Helikopter menembak dari udara sesekali (tidak mematikan, menekan).
+    h.shootTimer -= dt;
+    if (h.shootTimer <= 0 && d < 420) {
+      G.bullets.push({
+        x: h.x, y: h.y, angle: angleTo(h.x, h.y, p.x, p.y) + (Math.random() - 0.5) * 0.3,
+        speed: 700, damage: 3, from: 'enemy', life: 0.8, color: '#ff8a5a',
       });
+      h.shootTimer = 1.4;
     }
-    // Kurangi bila berlebih (pulang ke markas = hapus).
-    while (this.cars.length > wantCars) {
-      const car = this.cars.pop();
-      this.renderer.scene.remove(car.mesh);
-    }
-    // Petugas jalan kaki di bintang 1-2.
-    const wantOfficers = this.stars >= 1 && this.stars <= 2 ? 2 : 0;
-    while (this.officers.length < wantOfficers) {
-      const mesh = this.renderer.makePedMesh(0x1e3a8a, 0xc98a5a);
-      this.renderer.scene.add(mesh);
-      this.officers.push({ x: 0, z: 0, heading: 0, mesh, catchTimer: 0 });
-    }
-    while (this.officers.length > wantOfficers) {
-      const o = this.officers.pop();
-      this.renderer.scene.remove(o.mesh);
-    }
-    // Helikopter di bintang 3+.
-    if (this.stars >= CONFIG.wanted.heliAtStars && !this.heliMesh) {
-      this.heliMesh = this.renderer.makeHeliMesh();
-      this.renderer.scene.add(this.heliMesh);
-      this.heli = { x: 0, z: 0, y: 55, angle: 0, mesh: this.heliMesh };
-    }
-    if (this.stars < CONFIG.wanted.heliAtStars && this.heliMesh) {
-      this.renderer.scene.remove(this.heliMesh);
-      this.heliMesh = null;
-      this.heli = null;
-    }
-    // Blokade di bintang 3+: dua mobil melintang di jalan depan pemain.
-    if (this.stars >= 3 && this.roadblock.length === 0) {
-      for (let i = 0; i < 2; i += 1) {
-        const mesh = this.renderer.makeCarMesh('polisi');
-        this.renderer.scene.add(mesh);
-        this.roadblock.push({ x: 0, z: 0, heading: 0, mesh, placed: false });
-      }
-    }
-    if (this.stars < 3 && this.roadblock.length > 0) {
-      for (const b of this.roadblock) this.renderer.scene.remove(b.mesh);
-      this.roadblock = [];
+    // Rotor meniup debu di bawahnya.
+    if (Math.random() < 0.3) {
+      G.addParticles(h.x + (Math.random() - 0.5) * 60, h.y + (Math.random() - 0.5) * 60, 1, '#c9c9c9', 60);
     }
   }
 
-  /** Letakkan blokade di depan pemain (dipanggil misi saat pemain mendekat). */
-  placeRoadblock(x, z, heading) {
-    for (let i = 0; i < this.roadblock.length; i += 1) {
-      const b = this.roadblock[i];
-      const side = i === 0 ? -1 : 1;
-      b.x = x + Math.cos(heading) * side * 4;
-      b.z = z + Math.sin(heading) * side * 4;
-      b.heading = heading + Math.PI / 2;
-      b.placed = true;
-      b.mesh.position.set(b.x, 0, b.z);
-      b.mesh.rotation.y = b.heading;
+  // --- Blokade jalan (wanted 4+) --------------------------------------------
+  if (wanted >= 4 && G.roadblocks.length < 2 && G.blockTimer <= 0) {
+    const ahead = aheadRoadPoint(G, p);
+    if (ahead) {
+      G.roadblocks.push({
+        x: ahead.x, y: ahead.y, angle: ahead.angle,
+        cars: [makeCar('patroli', ahead.x - 30, ahead.y, ahead.angle + Math.PI / 2, { driver: 'police', ai: { kind: 'blockade' } })],
+        timer: 30,
+      });
+      G.addToast('Blokade polisi di depan! Cari jalan lain!');
+      G.blockTimer = 12;
     }
   }
+  G.blockTimer = Math.max(0, (G.blockTimer || 0) - dt);
+  for (const rb of G.roadblocks) rb.timer -= dt;
+  G.roadblocks = G.roadblocks.filter((rb) => rb.timer > 0 && wanted >= 3);
 
-  update(dt, player, now) {
-    this.time = now;
-    // Panas mereda bila lama tanpa kejahatan baru.
-    if (this.stars > 0 && now - this.lastCrimeAt > CONFIG.wanted.decaySeconds) {
-      this.heat = Math.max(0, this.heat - dt / 8);
-      if (this.heat <= 0) this.setStars(Math.max(0, this.stars - 1), now);
-    }
-
-    const px = player.x;
-    const pz = player.z;
-    // Mobil polisi: kejar pemain (kejar langsung bila panas, patroli bila dingin).
-    for (const car of this.cars) {
-      car.ramCooldown = Math.max(0, car.ramCooldown - dt);
-      const dx = px - car.x;
-      const dz = pz - car.z;
-      const dist = Math.hypot(dx, dz);
-      // Spawn di dekat pemain bila terlalu jauh (respawn patroli).
-      if (dist > 260) {
-        const node = nearestRoadNode(this.city, px + this.rng.range(-60, 60), pz + this.rng.range(-60, 60));
-        car.x = node.x;
-        car.z = node.z;
-        car.node = node.id;
-        car.target = null;
-        continue;
-      }
-      let goalX = px;
-      let goalZ = pz;
-      if (this.heat < 0.4) {
-        // Patroli: ikuti graf jalan.
-        if (!car.target) {
-          const neighbors = this.city.adjacency.get(car.node) || [];
-          if (neighbors.length > 0) car.target = neighbors[Math.floor(this.rng.next() * neighbors.length)];
-        }
-        const t = this.city.roadNodes[car.target];
-        if (t) { goalX = t.x; goalZ = t.z; }
-      }
-      const gx = goalX - car.x;
-      const gz = goalZ - car.z;
-      const goalHeading = Math.atan2(gx, gz);
-      let dh = goalHeading - car.heading;
-      while (dh > Math.PI) dh -= Math.PI * 2;
-      while (dh < -Math.PI) dh += Math.PI * 2;
-      const steerRate = this.heat > 0.4 ? 2.6 : 1.6;
-      car.heading += Math.max(-steerRate * dt, Math.min(steerRate * dt, dh));
-      const spec = CONFIG.cars.polisi;
-      const wantSpeed = this.heat > 0.4 ? spec.topSpeed * 0.96 : 12;
-      car.speed += (wantSpeed - car.speed) * Math.min(1, dt * 1.2);
-      car.x += Math.sin(car.heading) * car.speed * dt;
-      car.z += Math.cos(car.heading) * car.speed * dt;
-      const fixed = resolveCircleColliders(this.city, car.x, car.z, 1.6);
-      car.x = fixed.x;
-      car.z = fixed.z;
-      car.mesh.position.set(car.x, 0, car.z);
-      car.mesh.rotation.y = car.heading;
-      const spin = car.speed * dt * 2.4;
-      for (const wheel of car.mesh.userData.wheels) wheel.rotation.x += spin;
-      // Menabrak pemain (di mobil): dorong + rusak.
-      if (player.inCar && dist < 4.2 && car.ramCooldown <= 0) {
-        car.ramCooldown = 1.2;
-        if (player.onRam) player.onRam(car);
-      }
-      // Menangkap pemain jalan kaki: berdiri dekat 2,5 detik = tertangkap.
-      if (!player.inCar && dist < 3.2) {
-        car.catchTimer = (car.catchTimer || 0) + dt;
-        if (car.catchTimer > 2.5 && this._onBusted) {
-          this._onBusted('ditangkap');
-          car.catchTimer = 0;
-        }
-      } else {
-        car.catchTimer = 0;
+  // --- Wanted menurun saat bersembunyi --------------------------------------
+  const nearestCop = nearestCopDist(G);
+  const hidden = nearestCop > 520 && !G.recentShotActive;
+  if (wanted > 0 && hidden) {
+    G.hideTimer += dt;
+    if (G.hideTimer > 2) {
+      lowerWanted(G, dt * 2.2);
+      if (p.wanted === 0 && G.hideTimer > 2.2) {
+        G.addToast('Kau lolos dari kejaran polisi.');
+        G.hideTimer = 0;
       }
     }
-
-    // Petugas jalan kaki: berjalan ke arah pemain bila dekat.
-    for (const o of this.officers) {
-      const dx = px - o.x;
-      const dz = pz - o.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > 200) {
-        const node = nearestRoadNode(this.city, px + this.rng.range(-30, 30), pz + this.rng.range(-30, 30));
-        o.x = node.x;
-        o.z = node.z;
-        continue;
-      }
-      if (dist > 2.4) {
-        o.heading = Math.atan2(dx, dz);
-        o.x += Math.sin(o.heading) * 5.5 * dt;
-        o.z += Math.cos(o.heading) * 5.5 * dt;
-      } else {
-        o.catchTimer += dt;
-        if (o.catchTimer > 2 && this._onBusted) {
-          this._onBusted('ditangkap');
-          o.catchTimer = 0;
-        }
-      }
-      o.mesh.position.set(o.x, 0, o.z);
-      o.mesh.rotation.y = o.heading;
-    }
-
-    // Helikopter: mengorbit di atas pemain, sorot mengikuti.
-    if (this.heli) {
-      this.heli.angle += dt * 0.35;
-      const hx = px + Math.cos(this.heli.angle) * 26;
-      const hz = pz + Math.sin(this.heli.angle) * 26;
-      this.heli.x = hx;
-      this.heli.z = hz;
-      this.heli.mesh.position.set(hx, this.heli.y, hz);
-      this.heli.mesh.rotation.y = Math.atan2(px - hx, pz - hz);
-      for (const r of this.heli.mesh.userData.rotors) r.rotation.y += dt * 22;
-      this.heli.mesh.userData.spot.target.position.set(px - hx, -this.heli.y, pz - hz);
-    }
+  } else {
+    G.hideTimer = 0;
   }
 
-  dispose() {
-    for (const c of this.cars) this.renderer.scene.remove(c.mesh);
-    for (const o of this.officers) this.renderer.scene.remove(o.mesh);
-    for (const b of this.roadblock) this.renderer.scene.remove(b.mesh);
-    if (this.heliMesh) this.renderer.scene.remove(this.heliMesh);
-    this.cars = [];
-    this.officers = [];
-    this.roadblock = [];
-    this.heli = null;
-    this.heliMesh = null;
+  // Sirene berbunyi selama ada kejaran.
+  const chasing = policeCars.length > 0 || G.heli;
+  G.audio.setSiren(chasing);
+  G.audio.updateSiren(dt);
+}
+
+function spawnPoliceCar(G) {
+  const p = G.player;
+  const rng = G.rng;
+  const rp = randomRoadPoint(rng);
+  // Spawn di jalan, agak jauh dari pemain agar adil.
+  let x = rp.x;
+  let y = rp.y;
+  let tries = 0;
+  while (dist(x, y, p.x, p.y) < 380 && tries < 8) {
+    const rp2 = randomRoadPoint(rng);
+    x = rp2.x; y = rp2.y;
+    tries++;
   }
+  const angle = rp.vertical ? (rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2) : (rng.chance(0.5) ? 0 : Math.PI);
+  const car = makeCar('patroli', x, y, angle, {
+    driver: 'police',
+    ai: { kind: 'police', target: p, ramming: true },
+  });
+  car.speed = 180;
+  return car;
+}
+
+function aheadRoadPoint(G, p) {
+  // Titik jalan di depan arah gerak pemain (untuk blokade).
+  const dir = p.inCar ? p.inCar.angle : p.angle;
+  const fx = p.x + Math.cos(dir) * 420;
+  const fy = p.y + Math.sin(dir) * 420;
+  const road = nearestRoadPoint(fx, fy);
+  if (!road) return null;
+  return { x: road.x, y: road.y, angle: road.vertical ? Math.PI / 2 : 0 };
+}
+
+export function nearestCopDist(G) {
+  const p = G.player;
+  let best = Infinity;
+  for (const c of G.cars) {
+    if (c.isPolice && c.driver === 'police') best = Math.min(best, dist(c.x, c.y, p.x, p.y));
+  }
+  for (const e of G.enemies) {
+    if (e.isCop && !e.dead) best = Math.min(best, dist(e.x, e.y, p.x, p.y));
+  }
+  if (G.heli) best = Math.min(best, dist(G.heli.x, G.heli.y, p.x, p.y));
+  return best;
+}
+
+// Ditangkap polisi: denda, senjata disita sebagian, respawn di kantor polisi.
+export function arrestPlayer(G) {
+  const p = G.player;
+  const fine = Math.min(p.cash, 300);
+  p.cash -= fine;
+  p.wanted = 0;
+  p.wantedHeat = 0;
+  p.hp = Math.max(30, p.hp);
+  // Amunisi disita sebagian sebagai barang bukti — senjata tetap di tangan.
+  for (const wid of ['pistol', 'smg', 'shotgun']) {
+    if (p.owned[wid]) p.reserve[wid] = Math.floor((p.reserve[wid] || 0) / 2);
+  }
+  // Respawn di depan Balai Kota Tua.
+  p.x = 1500;
+  p.y = 1560;
+  if (p.inCar) {
+    p.inCar.driver = null;
+    p.inCar = null;
+  }
+  G.enemies = G.enemies.filter((e) => !e.isCop);
+  G.cars = G.cars.filter((c) => !(c.isPolice && c.driver === 'police'));
+  G.heli = null;
+  G.roadblocks = [];
+  G.audio.sfx.fail();
+  G.addToast('DITANGKAP! Denda Rp ' + fine + '. Kau dibebaskan di Balai Kota Tua.');
+  G.shake = 8;
 }

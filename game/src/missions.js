@@ -1,396 +1,651 @@
 // TELUK HARAPAN — missions.js
-// 5 story mission: tiap misi punya dialog pembuka, daftar objektif berurutan,
-// NPC musuh & sekutu, dan kondisi menang/kalah. State machine kecil per misi:
-// dialogue -> objectives -> done/failed. Ditulis fresh untuk round 4 —
-// revisi ini sengaja hanya 5 misi, masing-masing dengan arc lengkap.
+// Lima story mission, masing-masing satu arc lengkap (intro, konflik,
+// twist, finale) dengan dialog, tujuan bervariasi, dan hadiah.
+// Misi 1-2 di Hari 1 (Senja), 3-4 di Hari 2 (Maghrib), 5 di Hari 3 (Malam).
 
-import { CONFIG } from './config.js';
+import { MISSIONS, STORY } from './config.js';
+import { dist, angleTo } from './random.js';
+import { makeEnemy } from './combat.js';
+import { makeCar } from './vehicles.js';
+import { addCash, raiseWanted, lowerWanted } from './player.js';
+import { districtAt } from './world.js';
 
-const ENEMY_SHOOT_RANGE = 42;
-const ENEMY_DAMAGE = 7;
+// --- Titik-titik penting di peta --------------------------------------------
+export const SPOTS = {
+  tono: { x: 340, y: 1250, label: 'Pak Tono — Pelabuhan' },
+  pasarDrop: { x: 1500, y: 500, label: 'Pasar Ikan Lama' },
+  balai: { x: 1200, y: 1250, label: 'Balai Kota Tua' },
+  bengkel: { x: 1800, y: 1150, label: 'Bengkel Jaya — Sinta' },
+  taksi: { x: 1200, y: 850, label: 'Taksi Kuning' },
+  gudang: { x: 860, y: 2150, label: 'Gudang 7 — Dermaga Neon' },
+  dermaga: { x: 2100, y: 2150, label: 'Klub Lampion' },
+  vila: { x: 2950, y: 575, label: 'Vila Bukit' },
+  rumah: { x: 2950, y: 600, label: 'Rumah Aman' },
+};
 
-export class MissionRunner {
-  constructor(game) {
-    this.game = game; // akses: player, renderer, traffic, police, economy, audio, city
-    this.missionIndex = -1;
-    this.mission = null;
-    this.objectiveIndex = 0;
-    this.dialogue = [];
-    this.dialogueIndex = 0;
-    this.dialogueTimer = 0;
-    this.enemies = [];
-    this.allies = [];
-    this.escapeTimer = 0;
-    this.escapeNeed = 0;
-    this.chaseTarget = null;
-    this.defeatNeeded = 0;
-    this.defeatDone = 0;
-    this.bossSpawned = false;
-    this.bossMinionsSpawned = false;
-    this.state = 'idle'; // idle | dialogue | playing | done | failed
-    this.failReason = '';
-    this._onEvent = null;
+// --- State misi ---------------------------------------------------------------
+export function createMissionState() {
+  return {
+    id: 0, // 0 = belum ada misi aktif
+    stageIndex: -1,
+    stage: null,
+    stageTimer: 0,
+    stageData: {},
+    active: false,
+    completed: [],
+    objective: 'Jelajahi Teluk Harapan. Cari penanda misi kuning di peta.',
+    marker: null, // {x,y,label}
+    stealth: 0, // meter deteksi untuk misi penyamaran
+    followCar: null,
+    boss: null,
+    safeTimer: 0,
+    introShown: false,
+  };
+}
+
+export function missionById(id) {
+  return MISSIONS.find((m) => m.id === id);
+}
+
+export function nextMissionId(G) {
+  for (const m of MISSIONS) {
+    if (!G.mission.completed.includes(m.id)) return m.id;
   }
+  return 0;
+}
 
-  onEvent(cb) { this._onEvent = cb; }
-  _emit(type, data) { if (this._onEvent) this._onEvent(type, data); }
+// Posisi mulai misi berikutnya (penanda kuning di peta).
+export function nextMissionStart(G) {
+  const id = nextMissionId(G);
+  if (id === 1) return { ...SPOTS.tono, missionId: 1 };
+  if (id === 2) return { ...SPOTS.bengkel, missionId: 2 };
+  if (id === 3) return { ...SPOTS.tono, missionId: 3 };
+  if (id === 4) return { ...SPOTS.bengkel, missionId: 4 };
+  if (id === 5) return { ...SPOTS.dermaga, missionId: 5 };
+  return null;
+}
 
-  get currentObjective() {
-    if (!this.mission) return null;
-    return this.mission.objectives[this.objectiveIndex] || null;
+export function startMission(G, id) {
+  const def = missionById(id);
+  if (!def) return false;
+  const M = G.mission;
+  // NPC misi lama dibersihkan — jangan sampai dua 'Pak Tono' di titik sama
+  // dan autopilot/pemain bicara dengan yang salah.
+  G.npcs = [];
+  // Polisi jalan kaki dari sebelum misi juga diusir — mereka bukan bagian
+  // dari misi, dan penangkapan di tengah baku tembak terasa tidak adil.
+  G.enemies = G.enemies.filter((e) => !e.isCop);
+  M.id = id;
+  M.active = true;
+  M.stageIndex = 0;
+  M.stageData = {};
+  M.introShown = true;
+  G.player.day = def.day;
+  G.setDay(def.day);
+  G.showDialogue(def.intro, () => {
+    enterStage(G, 0);
+  });
+  G.audio.sfx.mission();
+  return true;
+}
+
+export function enterStage(G, idx) {
+  const M = G.mission;
+  const def = missionById(M.id);
+  const stage = def.stages[idx];
+  if (!stage) {
+    completeMission(G);
+    return;
   }
+  M.stageIndex = idx;
+  M.stage = stage;
+  M.stageTimer = 0;
+  M.stageData = {};
+  M.objective = stage.text;
+  M.marker = stage.target ? { x: stage.target.x, y: stage.target.y, label: stage.target.label || stage.text } : null;
+  if (stage.onEnter) stage.onEnter(G);
+  G.addToast('Tujuan: ' + stage.text);
+}
 
-  get progressText() {
-    if (!this.mission) return '';
-    const done = this.mission.objectives.slice(0, this.objectiveIndex).length;
-    return `${done}/${this.mission.objectives.length}`;
-  }
+export function advanceStage(G) {
+  const M = G.mission;
+  const def = missionById(M.id);
+  G.audio.sfx.pickup();
+  enterStage(G, M.stageIndex + 1);
+}
 
-  startMission(index) {
-    const def = CONFIG.missions[index];
-    if (!def) return false;
-    this._clearField();
-    this.missionIndex = index;
-    this.mission = def;
-    this.objectiveIndex = 0;
-    this.dialogue = def.dialogue.slice();
-    this.dialogueIndex = 0;
-    this.dialogueTimer = 0;
-    this.escapeTimer = 0;
-    this.defeatDone = 0;
-    this.bossSpawned = false;
-    this.bossMinionsSpawned = false;
-    this.state = 'dialogue';
-    this.game.applyPhase(def.phase);
-    this.game.setDay(def.day);
-    if (def.startWanted) this.game.police.setStars(def.startWanted, this.game.time);
-    this._emit('mission-start', { mission: def });
-    return true;
-  }
-
-  advanceDialogue() {
-    if (this.state !== 'dialogue') return;
-    this.dialogueIndex += 1;
-    this.dialogueTimer = 0;
-    if (this.dialogueIndex >= this.dialogue.length) {
-      this.state = 'playing';
-      this._spawnForObjective();
-      this._emit('dialogue-done', {});
+export function completeMission(G) {
+  const M = G.mission;
+  const def = missionById(M.id);
+  M.active = false;
+  M.completed.push(M.id);
+  M.stage = null;
+  M.marker = null;
+  G.npcs = [];
+  // Bersihkan sisa misi: musuh dan kendaraan misi tidak boleh mengejar
+  // pemain selamanya ke misi berikutnya.
+  G.enemies = G.enemies.filter((e) => !e.mission);
+  G.cars = G.cars.filter((c) => !c.mission || c === G.player.inCar);
+  if (M.followCar) M.followCar = null;
+  G.mission.boss = null;
+  M.objective = 'Misi selesai! Cari penanda misi berikutnya.';
+  G.player.missionsDone++;
+  G.player.medkits = Math.min(3, (G.player.medkits || 0) + 1);
+  G.addToast('+1 kotak P3K dari Sinta. Sisa: ' + G.player.medkits);
+  // Misi selesai: polisi kehilangan jejak sepenuhnya — jangan biarkan
+  // kejaran misi sebelumnya membunuh pemain di jalan menuju misi berikut.
+  G.player.wantedHeat = 0;
+  G.player.wanted = 0;
+  G.enemies = G.enemies.filter((e) => !e.isCop);
+  G.addToast('Polisi kehilangan jejakmu. Tarik napas sebelum misi berikut.');
+  addCash(G, def.reward, 'Hadiah misi: ' + def.title);
+  G.audio.sfx.mission();
+  G.showDialogue(def.outro, () => {
+    // Pergantian hari setelah misi 2 dan 4.
+    if (M.id === 2) {
+      G.setDay(2);
+      G.addToast('Hari berganti — Maghrib turun di Teluk Harapan.');
+    } else if (M.id === 4) {
+      G.setDay(3);
+      G.addToast('Hari berganti — Malam terakhir telah tiba.');
     }
-  }
-
-  _clearField() {
-    for (const e of this.enemies) this.game.renderer.scene.remove(e.mesh);
-    for (const a of this.allies) this.game.renderer.scene.remove(a.mesh);
-    this.enemies = [];
-    this.allies = [];
-    this.chaseTarget = null;
-  }
-
-  _spawnEnemy(x, z, opts) {
-    const o = opts || {};
-    const mesh = this.game.renderer.makePedMesh(o.shirt || 0x8a2a2a, 0xc98a5a);
-    mesh.position.set(x, 0, z);
-    this.game.renderer.scene.add(mesh);
-    const enemy = {
-      x, z, heading: 0, hp: o.hp || 60, mesh,
-      kind: o.kind || 'gang', shootTimer: 1 + Math.random(),
-      speed: o.speed || 4.5, boss: !!o.boss, name: o.name || 'Anak Buah',
-    };
-    this.enemies.push(enemy);
-    return enemy;
-  }
-
-  _spawnAlly(x, z, name, shirt) {
-    const mesh = this.game.renderer.makePedMesh(shirt || 0x3a7ad9, 0xe8b88a);
-    mesh.position.set(x, 0, z);
-    this.game.renderer.scene.add(mesh);
-    const ally = { x, z, heading: 0, mesh, name, follow: false };
-    this.allies.push(ally);
-    return ally;
-  }
-
-  _spawnForObjective() {
-    const obj = this.currentObjective;
-    if (!obj) return;
-    const g = this.game;
-    switch (this.mission.id + ':' + obj.id) {
-      case 'm1:deliver':
-        // Dua penagih utang mulai membuntuti dengan mobil.
-        for (let i = 0; i < 2; i += 1) {
-          const mesh = g.renderer.makeCarMesh('sedan', 0x2a2a2a);
-          g.renderer.scene.add(mesh);
-          this.enemies.push({
-            x: g.player.x + (i === 0 ? -30 : 30), z: g.player.z - 20,
-            heading: 0, hp: 9999, mesh, kind: 'tail', shootTimer: 0, speed: 0, boss: false, name: 'Penagih',
-          });
-        }
-        break;
-      case 'm2:ambush':
-        this.defeatNeeded = obj.count;
-        this._spawnEnemy(-70, -218, { hp: 50 });
-        this._spawnEnemy(-56, -230, { hp: 50 });
-        this._spawnEnemy(-64, -210, { hp: 50 });
-        break;
-      case 'm3:bridge':
-        // Blokade polisi di jembatan.
-        g.police.placeRoadblock(64, 96, Math.PI / 2);
-        break;
-      case 'm4:clear':
-        this.defeatNeeded = obj.count;
-        this._spawnEnemy(196, -104, { hp: 60 });
-        this._spawnEnemy(216, -88, { hp: 60 });
-        this._spawnEnemy(200, -80, { hp: 60 });
-        this._spawnEnemy(224, -104, { hp: 60 });
-        this._spawnEnemy(190, -88, { hp: 60 });
-        this._spawnEnemy(216, -112, { hp: 60 });
-        break;
-      case 'm5:chase': {
-        // Perahu Anggara melaju ke utara di perairan pelabuhan.
-        const mesh = g.renderer.makeCarMesh('perahu', 0x1a1a1a);
-        g.renderer.scene.add(mesh);
-        this.chaseTarget = {
-          x: -292, z: 120, heading: Math.PI, speed: 16, mesh,
-          kind: 'boat', hp: 9999, name: 'Perahu Anggara', shootTimer: 0, boss: false,
-        };
-        this.enemies.push(this.chaseTarget);
-        break;
-      }
-      case 'm5:boss': {
-        const boss = this._spawnEnemy(-276, 40, { hp: 300, boss: true, name: 'Bos Anggara', shirt: 0x1a1a1a, speed: 5.5 });
-        this.bossSpawned = true;
-        this._emit('boss', { name: 'Bos Anggara' });
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
-  /** Dipanggil main.js saat pemain membunuh musuh (damage datang dari tembakan pemain). */
-  registerKill(enemy) {
-    const obj = this.currentObjective;
-    if (this.state !== 'playing' || !obj || obj.kind !== 'defeat') return;
-    this.defeatDone += 1;
-    this._emit('kill', { done: this.defeatDone, need: this.defeatNeeded });
-    if (this.defeatDone >= this.defeatNeeded) this._completeObjective();
-  }
-
-  _completeObjective() {
-    const obj = this.currentObjective;
-    this._emit('objective-done', { objective: obj });
-    this.game.audio.chime();
-    this.objectiveIndex += 1;
-    this.escapeTimer = 0;
-    if (this.objectiveIndex >= this.mission.objectives.length) {
-      this._finishMission();
+    const next = nextMissionId(G);
+    if (next === 0) {
+      G.state = 'victory';
+      G.audio.sfx.mission();
     } else {
-      this._spawnForObjective();
-    }
-  }
-
-  _finishMission() {
-    this.state = 'done';
-    const reward = this.mission.reward;
-    this.game.economy.earn(reward, `Misi ${this.mission.title} selesai`);
-    this.game.audio.missionSting();
-    if (this.mission.unlock === 'pistol') this.game.economy.giveWeapon('pistol');
-    if (this.mission.unlock === 'smg') this.game.economy.giveWeapon('smg');
-    if (this.mission.unlock === 'win') this.game.winGame();
-    this._emit('mission-done', { mission: this.mission, reward });
-    this._clearField();
-  }
-
-  failMission(reason) {
-    if (this.state !== 'playing' && this.state !== 'dialogue') return;
-    this.state = 'failed';
-    this.failReason = reason;
-    this.game.audio.failSting();
-    this._emit('mission-failed', { reason });
-    this._clearField();
-  }
-
-  _nearestPursuerDist() {
-    const g = this.game;
-    let best = Infinity;
-    for (const e of this.enemies) {
-      const d = Math.hypot(e.x - g.player.x, e.z - g.player.z);
-      if (d < best) best = d;
-    }
-    for (const c of g.police.cars) {
-      const d = Math.hypot(c.x - g.player.x, c.z - g.player.z);
-      if (d < best) best = d;
-    }
-    return best;
-  }
-
-  update(dt) {
-    if (this.state === 'dialogue') {
-      this.dialogueTimer += dt;
-      if (this.dialogueTimer > 6) this.advanceDialogue();
-      return;
-    }
-    if (this.state !== 'playing') return;
-    const g = this.game;
-    const obj = this.currentObjective;
-    if (!obj) return;
-
-    // --- gerak musuh ---
-    for (let i = this.enemies.length - 1; i >= 0; i -= 1) {
-      const e = this.enemies[i];
-      if (e.kind === 'tail') {
-        // Penagih membuntuti dengan mobil: kejar pemain, tapi tidak menabrak.
-        const dx = g.player.x - e.x;
-        const dz = g.player.z - e.z;
-        const d = Math.hypot(dx, dz) || 1;
-        const wantHeading = Math.atan2(dx, dz);
-        let dh = wantHeading - e.heading;
-        while (dh > Math.PI) dh -= Math.PI * 2;
-        while (dh < -Math.PI) dh += Math.PI * 2;
-        e.heading += Math.max(-2 * dt, Math.min(2 * dt, dh));
-        const speed = d > 26 ? 30 : d > 14 ? 22 : 12;
-        e.x += Math.sin(e.heading) * speed * dt;
-        e.z += Math.cos(e.heading) * speed * dt;
-        e.mesh.position.set(e.x, 0, e.z);
-        e.mesh.rotation.y = e.heading;
-        continue;
+      const start = nextMissionStart(G);
+      if (start) {
+        M.marker = { x: start.x, y: start.y, label: 'Misi ' + next + ': ' + missionById(next).title };
+        M.objective = 'Menuju misi berikutnya: ' + missionById(next).title;
       }
-      if (e.kind === 'boat') {
-        // Perahu Anggara melaju ke utara, sedikit berbelok.
-        e.z -= e.speed * dt;
-        e.x += Math.sin(g.time * 0.5) * 2 * dt;
-        if (e.z < -160) e.z = 130; // putar balik (tetap dalam jangkauan)
-        e.mesh.position.set(e.x, -0.2, e.z);
-        e.mesh.rotation.y = Math.PI;
-        continue;
+    }
+  });
+  if (M.id === 5) {
+    // Misi terakhir: kemenangan langsung setelah outro.
+    setTimeout(() => { if (G.state === 'playing') G.state = 'victory'; }, 100);
+  }
+}
+
+export function failMission(G, reason) {
+  const M = G.mission;
+  if (!M.active) return;
+  M.active = false;
+  M.stage = null;
+  M.marker = null;
+  G.npcs = [];
+  G.audio.sfx.fail();
+  G.addToast('MISI GAGAL: ' + reason + ' — kembali ke penanda misi untuk mencoba lagi.');
+  G.player.hp = Math.max(40, G.player.hp);
+  G.player.wanted = 0;
+  G.player.wantedHeat = 0;
+  // Bersihkan musuh dan kendaraan misi (taksi/becak gagal tidak menumpuk).
+  G.enemies = G.enemies.filter((e) => !e.mission);
+  G.cars = G.cars.filter((c) => !c.mission || c === G.player.inCar);
+  if (M.followCar) {
+    G.cars = G.cars.filter((c) => c !== M.followCar);
+    M.followCar = null;
+  }
+  const start = nextMissionStart(G);
+  if (start) {
+    M.marker = { x: start.x, y: start.y, label: 'Coba lagi: ' + missionById(M.id).title };
+    M.objective = 'Misi gagal — kembali ke penanda untuk mencoba lagi.';
+  }
+}
+
+// Dipanggil tiap frame saat misi aktif.
+export function updateMission(G, dt) {
+  const M = G.mission;
+  if (!M.active || !M.stage) return;
+  M.stageTimer += dt;
+  const stage = M.stage;
+  if (stage.onUpdate) stage.onUpdate(G, dt);
+  if (stage.isDone && stage.isDone(G)) {
+    advanceStage(G);
+  }
+}
+
+// Event dari sistem lain (bos mati, dll).
+export function missionEvent(G, kind, data) {
+  const M = G.mission;
+  if (!M.active || !M.stage) return;
+  if (M.stage.onEvent) M.stage.onEvent(G, kind, data);
+}
+
+// --- Pembantu stage -----------------------------------------------------------
+function spawnGoons(G, spots, count, opts = {}) {
+  const spawned = [];
+  for (let i = 0; i < count; i++) {
+    const s = spots[i % spots.length];
+    const e = makeEnemy(G, s.x + (Math.random() - 0.5) * 90, s.y + (Math.random() - 0.5) * 90, {
+      hp: opts.hp || 60,
+      speed: opts.speed || 100,
+      damage: opts.damage || 8,
+      dropsCash: opts.dropsCash || 60,
+      isBoss: !!opts.isBoss,
+      name: opts.name,
+    });
+    e.mission = true;
+    e.state = 'chase';
+    spawned.push(e);
+    G.enemies.push(e);
+  }
+  return spawned;
+}
+
+function markerReached(G, radius) {
+  const M = G.mission;
+  if (!M.marker) return false;
+  return dist(G.player.x, G.player.y, M.marker.x, M.marker.y) < (radius || 70);
+}
+
+// --- Definisi stage tiap misi ------------------------------------------------
+// Setiap stage: text (tujuan di HUD), target (penanda), onEnter, onUpdate,
+// isDone. Arc tiap misi: intro -> konflik -> twist -> finale.
+
+MISSIONS[0].stages = [
+  {
+    id: 'm1-temui-tono',
+    text: 'Temui Pak Tono di Pelabuhan Senja',
+    target: SPOTS.tono,
+    onEnter(G) {
+      G.npcs.push({
+        id: 'tono', name: 'Pak Tono', x: SPOTS.tono.x, y: SPOTS.tono.y,
+        color: '#2fa08a', role: 'Nelayan tua',
+        talk(G2) { G2.showDialogue([{ who: 'Pak Tono', text: 'Paketnya di becak motorku. Ambil, bawa ke Pasar Ikan. Cepat!' }]); },
+      });
+    },
+    isDone(G) { return G.mission.stageData.metTono; },
+    onEvent(G, kind) { if (kind === 'npcTalk' && G.mission.stageData.npcId === 'tono') G.mission.stageData.metTono = true; },
+  },
+  {
+    id: 'm1-ambil-paket',
+    text: 'Ambil paket dari becak motor Pak Tono',
+    target: { x: 300, y: 1150, label: 'Becak Motor Pak Tono' },
+    onEnter(G) {
+      const bike = makeCar('becakmotor', 300, 1150, Math.PI / 2, { owned: false });
+      bike.mission = true;
+      G.cars.push(bike);
+      G.mission.stageData.bike = bike;
+    },
+    onUpdate(G) {
+      const bike = G.mission.stageData.bike;
+      if (bike && G.player.inCar === bike) {
+        G.mission.stageData.gotPackage = true;
+        G.addToast('Paket di tangan! Bawa ke Pasar Ikan sebelum senja habis.');
       }
-      // Musuh jalan kaki: dekati pemain, tembak bila dalam jangkauan.
-      const dx = g.player.x - e.x;
-      const dz = g.player.z - e.z;
-      const d = Math.hypot(dx, dz) || 1;
-      if (d > 10) {
-        e.heading = Math.atan2(dx, dz);
-        e.x += Math.sin(e.heading) * e.speed * dt;
-        e.z += Math.cos(e.heading) * e.speed * dt;
+    },
+    isDone(G) { return G.mission.stageData.gotPackage; },
+  },
+  {
+    id: 'm1-antar',
+    text: 'Antar paket ke Pasar Ikan Lama (sebelum waktu habis!)',
+    target: SPOTS.pasarDrop,
+    onEnter(G) {
+      G.mission.stageData.timeLeft = 100;
+      G.addToast('Waktu: 100 detik. Jangan sampai paket ini terlambat!');
+    },
+    onUpdate(G, dt) {
+      const M = G.mission;
+      M.stageData.timeLeft -= dt;
+      if (M.stageData.timeLeft <= 0) {
+        failMission(G, 'paket terlambat sampai');
+      }
+      // Kejutan: dua anak buah Darma menghadang di tengah jalan.
+      if (!M.stageData.ambush && M.stageTimer > 12) {
+        M.stageData.ambush = true;
+        spawnGoons(G, [{ x: 1200, y: 850 }, { x: 1250, y: 900 }], 2, { hp: 50, dropsCash: 80 });
+        G.addToast('Anak buah Darma menghadang! Tabrak atau hindari mereka!');
+        raiseWanted(G, 8, 'dikejar anak buah Darma');
+      }
+    },
+    isDone(G) { return markerReached(G, 80); },
+  },
+  {
+    id: 'm1-selesai',
+    text: 'Serahkan paket ke pedagang pasar',
+    target: SPOTS.pasarDrop,
+    onEnter(G) {
+      G.npcs.push({
+        id: 'pedagang', name: 'Bu Sari', x: SPOTS.pasarDrop.x + 40, y: SPOTS.pasarDrop.y + 20,
+        color: '#c95a4a', role: 'Pedagang ikan',
+        talk(G2) {
+          G2.showDialogue([{ who: 'Bu Sari', text: 'Paket diterima, Nak. Pak Tono percaya padamu — jaga kepercayaan itu.' }]);
+        },
+      });
+    },
+    isDone(G) { return G.mission.stageData.delivered; },
+    onEvent(G, kind) { if (kind === 'npcTalk' && G.mission.stageData.npcId === 'pedagang') G.mission.stageData.delivered = true; },
+  },
+];
+
+MISSIONS[1].stages = [
+  {
+    id: 'm2-ke-balai',
+    text: 'Pergi ke Balai Kota Tua — anak buah Darma menunggu',
+    target: SPOTS.balai,
+    onEnter(G) {
+      G.addToast('Sinta: mereka berempat, bersenjata. Siapkan dirimu dulu kalau perlu.');
+    },
+    isDone(G) { return markerReached(G, 110); },
+  },
+  {
+    id: 'm2-hadapi',
+    text: 'Hadapi 4 anak buah Darma di Balai Kota Tua',
+    target: SPOTS.balai,
+    onEnter(G) {
+      const goons = spawnGoons(G, [
+        { x: 1120, y: 1250 }, { x: 1280, y: 1250 },
+        { x: 1120, y: 950 }, { x: 1280, y: 950 },
+      ], 4, { hp: 40, damage: 5, dropsCash: 120 });
+      G.mission.stageData.goons = goons;
+      G.addToast('Mereka menyerang! Bertahanlah, Raka!');
+      raiseWanted(G, 6, 'perkelahian di Kota Tua');
+    },
+    isDone(G) {
+      const goons = G.mission.stageData.goons || [];
+      return goons.length > 0 && goons.every((e) => e.dead);
+    },
+  },
+  {
+    id: 'm2-ambil-uang',
+    text: 'Ambil tas uang yang mereka jatuhkan',
+    target: SPOTS.balai,
+    onEnter(G) {
+      G.pickups.push({ kind: 'cash', x: 1200, y: 1250, amount: 400, label: 'Tas Uang' });
+      G.addToast('Tas uang ada di tengah plaza. Ambil!');
+    },
+    isDone(G) { return G.mission.stageData.gotBag; },
+    onEvent(G, kind) { if (kind === 'pickupCash') G.mission.stageData.gotBag = true; },
+  },
+  {
+    id: 'm2-kembali',
+    text: 'Kembali ke Bengkel Jaya, temui Sinta',
+    target: SPOTS.bengkel,
+    onEnter(G) {
+      G.npcs.push({
+        id: 'sinta', name: 'Sinta', x: SPOTS.bengkel.x, y: SPOTS.bengkel.y,
+        color: '#e8c832', role: 'Montir',
+        talk(G2) {
+          G2.showDialogue([{ who: 'Sinta', text: 'Uang kembali, dan kau masih hidup. Itu sudah lebih dari cukup untuk hari ini.' }]);
+        },
+      });
+      // Polisi mulai memperhatikan setelah perkelahian.
+      raiseWanted(G, 4, 'keributan di Kota Tua');
+    },
+    isDone(G) { return G.mission.stageData.metSinta; },
+    onEvent(G, kind) { if (kind === 'npcTalk' && G.mission.stageData.npcId === 'sinta') G.mission.stageData.metSinta = true; },
+  },
+];
+
+MISSIONS[2].stages = [
+  {
+    id: 'm3-temui-tono',
+    text: 'Temui Pak Tono di Pelabuhan (Maghrib)',
+    target: SPOTS.tono,
+    onEnter(G) {
+      G.npcs.push({
+        id: 'tono2', name: 'Pak Tono', x: SPOTS.tono.x, y: SPOTS.tono.y,
+        color: '#2fa08a', role: 'Nelayan tua',
+        talk(G2) { G2.showDialogue([{ who: 'Pak Tono', text: 'Taksi kuning di Pasar Ikan itu bukan taksi. Curilah — tapi jangan sampai ketahuan.' }]); },
+      });
+    },
+    isDone(G) { return G.mission.stageData.metTono; },
+    onEvent(G, kind) { if (kind === 'npcTalk' && G.mission.stageData.npcId === 'tono2') G.mission.stageData.metTono = true; },
+  },
+  {
+    id: 'm3-curi-taksi',
+    text: 'Curi taksi kuning di Pasar Ikan (jangan bikin keributan)',
+    target: SPOTS.taksi,
+    onEnter(G) {
+      const taxi = makeCar('taksi', SPOTS.taksi.x, SPOTS.taksi.y, 0, { owned: false });
+      taxi.mission = true;
+      G.cars.push(taxi);
+      G.mission.stageData.taxi = taxi;
+      // Panas yang sudah ada sebelum pencurian bukan salahmu — yang dinilai
+      // hanya keributan BARU selama mencuri (tembakan, tabrak warga, dll).
+      G.mission.stageData.heatAtStart = G.player.wantedHeat;
+      G.addToast('Taksi kuning ada di depan pasar. Dekati dari belakang, tekan E.');
+    },
+    onUpdate(G) {
+      let taxi = G.mission.stageData.taxi;
+      if (taxi && taxi.hp <= 0) {
+        // Taksi dihancurkan saat kau dalam perjalanan — ada taksi kuning lain.
+        G.cars = G.cars.filter((c) => c !== taxi);
+        const fresh = makeCar('taksi', SPOTS.taksi.x, SPOTS.taksi.y, 0, { owned: false });
+        fresh.mission = true;
+        G.cars.push(fresh);
+        G.mission.stageData.taxi = fresh;
+        taxi = fresh;
+        G.addToast('Taksi pertama hancur — ada taksi kuning lain di pasar.');
+      }
+      if (taxi && G.player.inCar === taxi) {
+        G.mission.stageData.stoleTaxi = true;
+        G.addToast('Taksi dicuri! Sekarang ikuti konvoi dari kejauhan.');
+      }
+      if (!G.mission.stageData.stoleTaxi
+        && G.player.wantedHeat - (G.mission.stageData.heatAtStart || 0) >= 20) {
+        failMission(G, 'aksimu ketahuan — polisi melihat keributan di pasar');
+      }
+    },
+    isDone(G) { return G.mission.stageData.stoleTaxi; },
+  },
+  {
+    id: 'm3-ikuti',
+    text: 'Ikuti konvoi Darma ke Dermaga Neon — jaga jarak 80-220m',
+    target: SPOTS.gudang,
+    onEnter(G) {
+      // Konvoi: 2 mobil yang bergerak menuju gudang.
+      const lead = makeCar('truk', 1500, 850, Math.PI / 2, { driver: 'traffic', ai: { kind: 'convoy', cruise: 120 } });
+      const escort = makeCar('sedan', 1500, 920, Math.PI / 2, { driver: 'traffic', ai: { kind: 'convoy', cruise: 120 } });
+      lead.mission = true;
+      escort.mission = true;
+      G.cars.push(lead, escort);
+      G.mission.stageData.convoy = [lead, escort];
+      G.mission.stageData.followTime = 0;
+      G.addToast('Konvoi bergerak ke selatan. Jangan terlalu dekat, jangan terlalu jauh!');
+    },
+    onUpdate(G, dt) {
+      const M = G.mission;
+      const convoy = M.stageData.convoy || [];
+      const lead = convoy[0];
+      if (!lead) return;
+      // Konvoi bergerak sendiri menuju gudang.
+      const a = angleTo(lead.x, lead.y, SPOTS.gudang.x, SPOTS.gudang.y);
+      lead.angle += (a - lead.angle) * Math.min(1, dt * 1.5);
+      lead.x += Math.cos(lead.angle) * 120 * dt;
+      lead.y += Math.sin(lead.angle) * 120 * dt;
+      const esc = convoy[1];
+      if (esc) {
+        esc.x += (lead.x - Math.cos(lead.angle) * 60 - esc.x) * Math.min(1, dt * 2);
+        esc.y += (lead.y - Math.sin(lead.angle) * 60 - esc.y) * Math.min(1, dt * 2);
+        esc.angle = lead.angle;
+      }
+      const d = dist(G.player.x, G.player.y, lead.x, lead.y);
+      M.stageData.followTime = d >= 80 && d <= 260 ? (M.stageData.followTime || 0) + dt : 0;
+      if (d < 60) {
+        M.stageData.detected = (M.stageData.detected || 0) + dt;
+        if (M.stageData.detected > 3) failMission(G, 'konvoi menyadari kau membuntuti');
       } else {
-        e.heading = Math.atan2(dx, dz);
+        M.stageData.detected = 0;
       }
-      e.shootTimer -= dt;
-      if (e.shootTimer <= 0 && d < ENEMY_SHOOT_RANGE) {
-        e.shootTimer = e.boss ? 0.9 : 1.6;
-        // Akurasi: 45% kena (bos 60%).
-        if (Math.random() < (e.boss ? 0.6 : 0.45)) {
-          g.damagePlayer(e.boss ? ENEMY_DAMAGE + 6 : ENEMY_DAMAGE, e.name);
-          g.renderer.spawnParticles(
-            { x: g.player.x, y: 1.4, z: g.player.z }, 0xff5533, 6, 4, 0.4, 0.5, -2,
-          );
+      if (dist(lead.x, lead.y, SPOTS.gudang.x, SPOTS.gudang.y) < 120) {
+        M.stageData.convoyArrived = true;
+      }
+    },
+    isDone(G) {
+      const M = G.mission;
+      return (M.stageData.followTime || 0) > 14 || M.stageData.convoyArrived;
+    },
+  },
+  {
+    id: 'm3-foto',
+    text: 'Foto gudang tujuan konvoi (dekati Gudang 7)',
+    target: SPOTS.gudang,
+    onEnter(G) {
+      G.addToast('Gudang 7 di depan. Dekati dan tekan E untuk memotret.');
+      G.mission.stageData.photoReady = true;
+    },
+    onUpdate(G) {
+      if (G.input.wasPressed('E') && dist(G.player.x, G.player.y, SPOTS.gudang.x, SPOTS.gudang.y) < 130) {
+        G.mission.stageData.photoTaken = true;
+        G.audio.sfx.pickup();
+        G.addToast('Foto diambil! Gudang 7 — tempat Darma menyimpan uangnya.');
+      }
+    },
+    isDone(G) { return G.mission.stageData.photoTaken; },
+  },
+];
+
+MISSIONS[3].stages = [
+  {
+    id: 'm4-ke-gudang',
+    text: 'Menyusup ke Gudang 7 di Dermaga Neon',
+    target: SPOTS.gudang,
+    onEnter(G) {
+      G.addToast('Sinta mematikan alarm — kau punya waktu terbatas begitu masuk.');
+    },
+    isDone(G) { return markerReached(G, 100); },
+  },
+  {
+    id: 'm4-bobol',
+    text: 'Bobol brankas Darma — tahan E di dekat brankas selama 8 detik',
+    target: SPOTS.gudang,
+    onEnter(G) {
+      G.mission.stageData.crack = 0;
+      G.mission.stageData.guards = spawnGoons(G, [
+        { x: 820, y: 2090 }, { x: 900, y: 2210 }, { x: 820, y: 2210 },
+      ], 3, { hp: 60, damage: 6, dropsCash: 150 });
+      G.addToast('Penjaga gudang menyerang! Sambil melawan, bobol brankasnya!');
+    },
+    onUpdate(G, dt) {
+      const M = G.mission;
+      const nearSafe = dist(G.player.x, G.player.y, SPOTS.gudang.x, SPOTS.gudang.y) < 90;
+      if (nearSafe && G.input.down('E') && !G.player.inCar) {
+        M.stageData.crack = (M.stageData.crack || 0) + dt;
+        if (Math.random() < 0.4) G.addParticles(G.player.x, G.player.y - 10, 1, '#ffd24a', 80);
+        if (M.stageData.crack >= 8) {
+          M.stageData.cracked = true;
+          G.addToast('BRANKAS TERBUKA! Ambil uangnya dan kabur!');
+          raiseWanted(G, 40, 'perampokan gudang');
         }
-        g.audio.gunshot();
-        g.renderer.spawnParticles(
-          { x: e.x, y: 1.5, z: e.z }, 0xffcc66, 5, 6, 0.25, 0.4, -1,
-        );
       }
-      e.mesh.position.set(e.x, 0, e.z);
-      e.mesh.rotation.y = e.heading;
-      // Bos memanggil 2 anak buah saat darah setengah.
-      if (e.boss && !this.bossMinionsSpawned && e.hp < 150) {
-        this.bossMinionsSpawned = true;
-        this._spawnEnemy(e.x + 6, e.z + 6, { hp: 50 });
-        this._spawnEnemy(e.x - 6, e.z + 6, { hp: 50 });
-        this._emit('boss-phase', {});
-      }
-    }
+    },
+    isDone(G) { return G.mission.stageData.cracked; },
+  },
+  {
+    id: 'm4-ambil-uang',
+    text: 'Ambil uang Darma dari brankas',
+    target: SPOTS.gudang,
+    onEnter(G) {
+      G.pickups.push({ kind: 'cash', x: SPOTS.gudang.x, y: SPOTS.gudang.y, amount: 1500, label: 'Uang Darma' });
+    },
+    isDone(G) { return G.mission.stageData.gotMoney; },
+    onEvent(G, kind) { if (kind === 'pickupCash') G.mission.stageData.gotMoney = true; },
+  },
+  {
+    id: 'm4-kabur',
+    text: 'KABUR! Capai Rumah Aman di Bukit Harapan sebelum tertangkap',
+    target: SPOTS.rumah,
+    onEnter(G) {
+      raiseWanted(G, 30, 'kabur dari gudang');
+      G.mission.stageData.escapeTimer = 150;
+      G.addToast('Helikopter dan blokade mengejarmu! 150 detik menuju Rumah Aman!');
+    },
+    onUpdate(G, dt) {
+      const M = G.mission;
+      M.stageData.escapeTimer -= dt;
+      if (M.stageData.escapeTimer <= 0) failMission(G, 'polisi mengepungmu sebelum sampai rumah aman');
+    },
+    isDone(G) { return markerReached(G, 90); },
+  },
+];
 
-    // --- sekutu mengikuti (Dimas setelah dijemput) ---
-    for (const a of this.allies) {
-      if (!a.follow) continue;
-      const dx = g.player.x - a.x;
-      const dz = g.player.z - a.z;
-      const d = Math.hypot(dx, dz);
-      if (d > 4) {
-        a.heading = Math.atan2(dx, dz);
-        a.x += Math.sin(a.heading) * 6 * dt;
-        a.z += Math.cos(a.heading) * 6 * dt;
-        a.mesh.position.set(a.x, 0, a.z);
-        a.mesh.rotation.y = a.heading;
+MISSIONS[4].stages = [
+  {
+    id: 'm5-konvoi',
+    text: 'Hentikan konvoi Bos Darma — tabrak / tembak 3 mobil pengawal',
+    target: SPOTS.dermaga,
+    onEnter(G) {
+      const escorts = [];
+      for (let i = 0; i < 3; i++) {
+        const c = makeCar(i === 0 ? 'sport' : 'sedan', 2100 + i * 90, 1750, Math.PI / 2, {
+          driver: 'traffic', ai: { kind: 'convoy', cruise: 140 },
+        });
+        c.mission = true;
+        c.hp = 120;
+        c.maxHp = 120;
+        escorts.push(c);
+        G.cars.push(c);
       }
-    }
+      G.mission.stageData.escorts = escorts;
+      G.mission.stageData.killed = 0;
+      G.addToast('Konvoi Darma datang dari utara! Hentikan mereka!');
+      raiseWanted(G, 20, 'konvoi Darma');
+    },
+    onUpdate(G, dt) {
+      const M = G.mission;
+      const escorts = M.stageData.escorts || [];
+      // Konvoi bergerak ke dermaga, lalu parkir di sana (menunggu) — bukan
+      // mengorbit selamanya, supaya bisa dikejar dan dihentikan.
+      for (const c of escorts) {
+        if (c.crashed) continue;
+        if (dist(c.x, c.y, SPOTS.dermaga.x, SPOTS.dermaga.y) < 60) continue;
+        const a = angleTo(c.x, c.y, SPOTS.dermaga.x, SPOTS.dermaga.y);
+        c.angle += (a - c.angle) * Math.min(1, dt * 1.2);
+        c.x += Math.cos(c.angle) * 110 * dt;
+        c.y += Math.sin(c.angle) * 110 * dt;
+      }
+      M.stageData.killed = escorts.filter((c) => c.crashed).length;
+    },
+    isDone(G) { return (G.mission.stageData.killed || 0) >= 3; },
+  },
+  {
+    id: 'm5-bos',
+    text: 'Hadapi Bos Darma di Dermaga Neon — kalahkan dia!',
+    target: SPOTS.dermaga,
+    onEnter(G) {
+      const boss = makeEnemy(G, SPOTS.dermaga.x, SPOTS.dermaga.y - 60, {
+        name: 'Bos Darma', hp: 320, speed: 110, damage: 12, range: 420,
+        isBoss: true, dropsCash: 2000,
+      });
+      boss.mission = true;
+      boss.state = 'shoot';
+      G.enemies.push(boss);
+      G.mission.boss = boss;
+      G.mission.stageData.bossDown = false;
+      // Dua pengawal terakhir.
+      spawnGoons(G, [{ x: 2020, y: 2100 }, { x: 2180, y: 2100 }], 2, { hp: 60, damage: 6, dropsCash: 200 });
+      G.addToast('BOS DARMA ada di depan Klub Lampion! Ini malam terakhir!');
+      raiseWanted(G, 25, 'pertempuran final');
+    },
+    isDone(G) { return G.mission.stageData.bossDown; },
+    onEvent(G, kind) { if (kind === 'bossDown') G.mission.stageData.bossDown = true; },
+  },
+  {
+    id: 'm5-finale',
+    text: 'Menuju Menara Suar — akhiri malam ini',
+    target: { x: 180, y: 1250, label: 'Menara Suar' },
+    onEnter(G) {
+      G.addToast('Darma jatuh. Pergi ke Menara Suar — Sinta dan Pak Tono menunggumu.');
+      G.npcs.push({
+        id: 'sinta2', name: 'Sinta', x: 180, y: 1250, color: '#e8c832', role: 'Montir',
+        talk(G2) {
+          G2.showDialogue([{ who: 'Sinta', text: 'Kau melakukannya, Raka. Teluk Harapan bebas.' }]);
+        },
+      });
+    },
+    isDone(G) { return G.mission.stageData.metFinal; },
+    onEvent(G, kind) { if (kind === 'npcTalk' && G.mission.stageData.npcId === 'sinta2') G.mission.stageData.metFinal = true; },
+  },
+];
 
-    // --- cek objektif ---
-    if (obj.kind === 'reach') {
-      const d = Math.hypot(g.player.x - obj.x, g.player.z - obj.z);
-      if (d < obj.radius) {
-        if (this.mission.id === 'm1' && obj.id === 'drive') {
-          // Dimas ikut: muncul di samping pemain dan mengikuti.
-          const dimas = this._spawnAlly(g.player.x + 2, g.player.z + 2, 'Dimas', 0x3a7ad9);
-          dimas.follow = true;
-        }
-        this._completeObjective();
-      }
-    } else if (obj.kind === 'escape') {
-      const near = this._nearestPursuerDist();
-      if (near > 26) {
-        this.escapeTimer += dt;
-        if (this.escapeTimer >= obj.seconds) this._completeObjective();
-      } else {
-        this.escapeTimer = Math.max(0, this.escapeTimer - dt * 2);
-      }
-    } else if (obj.kind === 'chase') {
-      if (this.chaseTarget) {
-        const d = Math.hypot(g.player.x - this.chaseTarget.x, g.player.z - this.chaseTarget.z);
-        if (d < obj.radius) this._completeObjective();
-      }
-    }
-    // defeat: diselesaikan lewat registerKill.
+// NPC talk harus memberi tahu misi siapa yang diajak bicara.
+export function npcTalked(G, npc) {
+  const M = G.mission;
+  if (M.active && M.stage) {
+    M.stageData.npcId = npc.id;
+    missionEvent(G, 'npcTalk', npc);
   }
-
-  /** Musuh yang sedang dibidik pemain (untuk tembakan): terdekat dalam kerucut bidik. */
-  aimTarget(origin, dirX, dirZ, maxRange) {
-    let best = null;
-    let bestScore = Infinity;
-    for (const e of this.enemies) {
-      if (e.kind === 'tail' || e.kind === 'boat') continue;
-      const dx = e.x - origin.x;
-      const dz = e.z - origin.z;
-      const d = Math.hypot(dx, dz);
-      if (d > maxRange || d < 0.5) continue;
-      const dot = (dx * dirX + dz * dirZ) / d;
-      if (dot < 0.86) continue; // di luar kerucut bidik (~30 derajat)
-      const score = d + (1 - dot) * 20;
-      if (score < bestScore) {
-        bestScore = score;
-        best = e;
-      }
-    }
-    return best;
-  }
-
-  damageEnemy(enemy, amount) {
-    enemy.hp -= amount;
-    this.game.renderer.spawnParticles(
-      { x: enemy.x, y: 1.4, z: enemy.z }, 0xff3333, 8, 5, 0.4, 0.5, -2,
-    );
-    if (enemy.hp <= 0) {
-      const idx = this.enemies.indexOf(enemy);
-      if (idx !== -1) this.enemies.splice(idx, 1);
-      this.game.renderer.scene.remove(enemy.mesh);
-      this.game.renderer.spawnParticles(
-        { x: enemy.x, y: 1, z: enemy.z }, 0xaa2222, 16, 7, 0.8, 0.8, -4,
-      );
-      if (enemy.kind !== 'tail' && enemy.kind !== 'boat') {
-        this.registerKill(enemy);
-      }
-      return true;
-    }
-    return false;
-  }
-
-  reset() {
-    this._clearField();
-    this.missionIndex = -1;
-    this.mission = null;
-    this.objectiveIndex = 0;
-    this.dialogue = [];
-    this.state = 'idle';
-  }
+  if (npc.talk) npc.talk(G);
 }
